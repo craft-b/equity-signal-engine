@@ -3,3 +3,7 @@ pandas
 matplotlib
 yfinance
 jupyter
+joblib
+seaborn
+scikit-learn
+streamlit
