@@ -1,4 +1,4 @@
-# ML Asset Prediction
+# Equity Signal Engine
 
 A production-style ML trading system demonstrating end-to-end ML engineering in finance — from raw market data to a live interactive dashboard.
 
