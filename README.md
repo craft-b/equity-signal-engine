@@ -1,6 +1,24 @@
 # Equity Signal Engine
 
+[![CI](https://github.com/craft-b/equity-signal-engine/actions/workflows/test.yml/badge.svg)](https://github.com/craft-b/equity-signal-engine/actions/workflows/test.yml)
+
 A production-style ML trading system demonstrating end-to-end ML engineering in finance — from raw market data to a live interactive dashboard.
+
+## Demo
+
+![Dashboard screenshot](docs/screenshot.png)
+
+> _Live demo coming soon (Streamlit Community Cloud)_
+
+## Quickstart
+
+```bash
+git clone https://github.com/craft-b/equity-signal-engine.git
+cd equity-signal-engine
+pip install -r requirements.txt        # app only
+# pip install -r requirements-dev.txt  # includes jupyter + pytest
+streamlit run stock_dashboard/app.py
+```
 
 ## Overview
 
@@ -10,41 +28,39 @@ This project builds a supervised learning pipeline for short-term equity directi
 - Sklearn-compatible data pipeline with configurable technical indicator computation, outlier capping, missing-data handling, and feature selection
 - Binary classifier (Random Forest or Logistic Regression) trained with proper time-series cross-validation (no look-ahead)
 - Event-driven backtest engine with position sizing, stop-loss/take-profit, transaction costs, and long/short support
-- Streamlit dashboard for interactive strategy exploration
+- Multi-page Streamlit dashboard for interactive strategy exploration
 
 ## Project Structure
 
 ```
-ml-asset-prediction/
+equity-signal-engine/
 ├── stock_dashboard/
-│   ├── app.py             # Streamlit dashboard (entry point)
-│   ├── data_pipeline.py   # Data fetching + sklearn Pipeline
-│   ├── models.py          # Model training + evaluation
-│   ├── backtest.py        # Event-driven backtest engine
-│   └── utils.py           # Plotly chart builders
+│   ├── app.py                  # Streamlit entry point (landing page)
+│   ├── pages/
+│   │   ├── 1_Signal_Generator.py   # ML model training + signal view
+│   │   └── 2_Strategy_Backtest.py  # Backtest configuration + results
+│   ├── data_pipeline.py        # Data fetching + sklearn Pipeline
+│   ├── models.py               # Model training + evaluation
+│   ├── backtest.py             # Event-driven backtest engine
+│   └── utils.py                # Plotly chart builders
+├── tests/
+│   ├── test_data_pipeline.py   # 27 tests
+│   ├── test_models.py          # 22 tests
+│   └── test_backtest.py        # 26 tests
 ├── notebooks/
-│   └── jane_trading.ipynb # Exploratory analysis
-├── data_cache/            # Cached raw data (gitignored)
+│   └── jane_trading.ipynb      # Exploratory analysis
+├── .github/workflows/
+│   └── test.yml                # CI: pytest on every push
 ├── requirements.txt
 └── README.md
 ```
 
-## Setup
+## Tests
+
+75 tests across the full pipeline, run automatically on every push:
 
 ```bash
-python -m venv .venv
-source .venv/Scripts/activate   # Windows bash
-# or
-source .venv/bin/activate        # macOS/Linux
-
-pip install -r requirements.txt
-```
-
-## Running the Dashboard
-
-```bash
-cd stock_dashboard
-streamlit run app.py
+pytest tests/
 ```
 
 ## Tech Stack
@@ -56,6 +72,7 @@ streamlit run app.py
 | ML models | `scikit-learn` (Random Forest, Logistic Regression) |
 | Backtesting | Custom event-driven engine |
 | Dashboard | `streamlit`, `plotly` |
+| CI | GitHub Actions |
 
 ## Key Design Decisions
 
