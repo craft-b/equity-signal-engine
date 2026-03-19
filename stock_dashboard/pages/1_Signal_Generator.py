@@ -313,7 +313,9 @@ s1.metric("Up Signals", int(up_n))
 s2.metric("Down Signals", int(down_n))
 s3.metric("No Signal", int(flat_n))
 
-if total_sig > 0:
+if total_sig == 0:
+    st.warning("No directional signals generated — try lowering the Min Probability threshold.")
+elif total_sig > 0:
     up_pct = up_n / total_sig * 100
     if up_pct > 70:
         st.warning(f"Bullish bias: {up_pct:.0f}% of signals are Up — possible training-period bias.")

@@ -36,6 +36,20 @@ class TestPrepareMLDataset:
         for excluded in cfg.exclude_cols:
             assert excluded not in cols
 
+    def test_returns_none_when_single_class(self, ml_df):
+        df = ml_df.copy()
+        df["Target"] = 1  # only one class
+        X, y, cols = prepare_ml_dataset(df, ModelConfig())
+        assert X is None
+
+    def test_returns_none_when_minority_class_too_small(self, ml_df):
+        df = ml_df.copy()
+        # Set all but 5 rows to class 0 — minority class < 10
+        df["Target"] = 0
+        df.loc[:4, "Target"] = 1
+        X, y, cols = prepare_ml_dataset(df, ModelConfig())
+        assert X is None
+
     def test_returns_none_for_insufficient_samples(self, ml_df):
         cfg = ModelConfig(min_train_samples=10_000)
         X, y, cols = prepare_ml_dataset(ml_df, cfg)

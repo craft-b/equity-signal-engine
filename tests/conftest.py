@@ -40,7 +40,7 @@ def raw_ohlcv() -> pd.DataFrame:
         "Volume": volume,
         "Ticker": "TEST",
         "Return": pd.Series(close).pct_change().values,
-        "Log_Return": np.log(close / np.roll(close, 1)),
+        "Log_Return": np.log(pd.Series(close) / pd.Series(close).shift(1)).values,
     })
     df.loc[0, ["Return", "Log_Return"]] = np.nan
     return df.dropna(subset=["Return"]).reset_index(drop=True)

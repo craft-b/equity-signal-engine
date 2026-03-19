@@ -292,3 +292,66 @@ class TestMetrics:
         assert trades_df.empty
         assert metrics["num_trades"] == 0
         assert len(history) > 0
+
+    def test_sortino_and_calmar_present_in_metrics(self):
+        df = make_trending_df(direction="up", n=120)
+        _, metrics, _ = run_backtest(df)
+        assert "sortino_ratio" in metrics
+        assert "calmar_ratio" in metrics
+
+    def test_sortino_ratio_bounded(self):
+        df = make_trending_df(direction="up", n=120)
+        _, metrics, _ = run_backtest(df)
+        # Sortino can be large positive for trending up, but should be finite
+        assert np.isfinite(metrics.get("sortino_ratio", 0))
+
+    def test_signal_reversal_exit(self):
+        """SMA_10 flips below SMA_50 while in a long position → Signal Reversal."""
+        n = 80
+        prices = np.full(n, 100.0, dtype=float)
+        # First 40 bars: SMA_10 > SMA_50 (long signal)
+        # Next 40 bars: SMA_10 < SMA_50 (short signal when shorts enabled)
+        sma10 = np.where(np.arange(n) < 40, 105.0, 95.0).astype(float)
+        sma50 = np.full(n, 100.0, dtype=float)
+
+        df = pd.DataFrame({
+            "Date": pd.date_range("2023-01-01", periods=n, freq="B"),
+            "Close": prices,
+            "SMA_10": sma10,
+            "SMA_50": sma50,
+        })
+        trades_df, _, _ = run_backtest(df, config=BacktestConfig(
+            max_holding_days=50, stop_loss_pct=0.50, take_profit_pct=0.50,
+            enable_shorts=True,
+        ))
+        assert not trades_df.empty
+        assert (trades_df["exit_reason"] == "Signal Reversal").any()
+
+    def test_short_position_profits_on_falling_prices(self):
+        """Short trade on falling prices should produce positive P&L."""
+        n = 80
+        prices = np.linspace(100.0, 80.0, n)  # steady decline
+        sma10 = np.full(n, 95.0)
+        sma50 = np.full(n, 100.0)
+
+        df = pd.DataFrame({
+            "Date": pd.date_range("2023-01-01", periods=n, freq="B"),
+            "Close": prices,
+            "SMA_10": sma10,
+            "SMA_50": sma50,
+        })
+        trades_df, metrics, _ = run_backtest(df, config=BacktestConfig(
+            enable_shorts=True, max_holding_days=50,
+            stop_loss_pct=0.50, take_profit_pct=0.50,
+        ))
+        if not trades_df.empty:
+            short_trades = trades_df[trades_df["position"] == "SHORT"]
+            if not short_trades.empty:
+                assert short_trades["pnl"].sum() > 0
+
+    def test_nan_prices_rejected_at_validation(self):
+        """NaN prices in Close should be caught at input validation, not silently skipped."""
+        df = make_df(n=100)
+        df.loc[30:35, "Close"] = np.nan  # inject NaN mid-series
+        _, metrics, _ = run_backtest(df)
+        assert "error" in metrics

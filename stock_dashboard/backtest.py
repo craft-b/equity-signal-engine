@@ -254,8 +254,23 @@ def run_backtest(
         if daily_returns.std() > 0 else 0.0
     )
 
+    # Sortino: annualised ratio using only downside volatility
+    downside = daily_returns[daily_returns < 0]
+    sortino = (
+        daily_returns.mean() / downside.std() * np.sqrt(252)
+        if len(downside) > 1 and downside.std() > 0 else 0.0
+    )
+
     cum_max = port_series.cummax()
     max_drawdown = ((port_series - cum_max) / cum_max).min() * 100
+
+    # Calmar: annualised return divided by absolute max drawdown
+    n_bars = len(portfolio_history)
+    annualised_return = (1 + total_return / 100) ** (252 / n_bars) - 1 if n_bars > 0 else 0.0
+    calmar = (
+        annualised_return / abs(max_drawdown / 100)
+        if max_drawdown < 0 else np.nan
+    )
 
     metrics = {
         "total_return": total_return,
@@ -270,6 +285,8 @@ def run_backtest(
             if len(losers) and losers["pnl"].sum() != 0 else np.nan
         ),
         "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
+        "calmar_ratio": calmar,
         "max_drawdown": max_drawdown,
         "final_value": final_value,
     }

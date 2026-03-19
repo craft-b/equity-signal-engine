@@ -133,6 +133,7 @@ def _safe_auc(y_true: pd.Series, probs: np.ndarray) -> float:
     try:
         return float(roc_auc_score(y_true, probs))
     except ValueError:
+        logger.warning("AUC-ROC undefined (single class in fold) — returning 0.5")
         return 0.5
 
 

@@ -56,6 +56,13 @@ class TestDataQualityChecker:
         result = DataQualityChecker(min_periods=50).fit_transform(shuffled)
         assert result["Date"].is_monotonic_increasing
 
+    def test_raises_when_deduplication_leaves_too_few_rows(self, raw_ohlcv):
+        """Duplicating a tiny DataFrame should still raise after deduplication."""
+        tiny = raw_ohlcv.head(5)
+        duped = pd.concat([tiny, tiny], ignore_index=True)
+        with pytest.raises(ValueError, match="Insufficient data"):
+            DataQualityChecker(min_periods=50).fit_transform(duped)
+
 
 # ---------------------------------------------------------------------------
 # TechnicalIndicators

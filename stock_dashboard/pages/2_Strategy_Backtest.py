@@ -46,6 +46,8 @@ period = period_map[st.sidebar.selectbox("Period", list(period_map.keys()), inde
 
 st.sidebar.subheader("Strategy")
 holding_period = st.sidebar.slider("Max Holding (days)", 1, 20, 5)
+threshold_pct = st.sidebar.slider("Return Threshold (%)", 0.1, 3.0, 0.5, 0.1,
+                                   help="Minimum forward return to label as 'up' for ML target.")
 transaction_cost_pct = st.sidebar.slider("Transaction Cost (%)", 0.0, 0.5, 0.1, 0.01) / 100
 
 st.sidebar.subheader("Risk Management")
@@ -78,10 +80,10 @@ def load_data(ticker: str, period: str) -> dict:
     return process_stock_data(ticker, period, config)
 
 
-def add_target(df: pd.DataFrame, holding_period: int) -> pd.DataFrame:
+def add_target(df: pd.DataFrame, holding_period: int, threshold_pct: float = 0.5) -> pd.DataFrame:
     out = df.copy()
     out["Future_Return"] = out["Close"].pct_change(holding_period).shift(-holding_period)
-    out["Target"] = (out["Future_Return"] > 0.01).astype(int)
+    out["Target"] = (out["Future_Return"] > threshold_pct / 100).astype(int)
     return out.dropna(subset=["Target"]).reset_index(drop=True)
 
 
@@ -109,7 +111,7 @@ st.success(
 )
 
 # 2. Add target --------------------------------------------------------------
-df = add_target(df, holding_period)
+df = add_target(df, holding_period, threshold_pct)
 
 # 3. Train model (optional) --------------------------------------------------
 train_result: TrainResult | None = None
@@ -168,6 +170,14 @@ c6.metric("Avg Win", f"{metrics.get('avg_win_pct', 0):.2f}%")
 c7.metric("Avg Loss", f"{metrics.get('avg_loss_pct', 0):.2f}%")
 pf = metrics.get("profit_factor", float("nan"))
 c8.metric("Profit Factor", f"{pf:.2f}" if not np.isnan(pf) else "—")
+
+c9, c10, _, _ = st.columns(4)
+sortino = metrics.get("sortino_ratio", 0)
+calmar = metrics.get("calmar_ratio", float("nan"))
+c9.metric("Sortino Ratio", f"{sortino:.2f}",
+          help="Annualised return / downside volatility. Higher is better.")
+c10.metric("Calmar Ratio", f"{calmar:.2f}" if not (isinstance(calmar, float) and np.isnan(calmar)) else "—",
+           help="Annualised return / max drawdown. Higher is better.")
 
 # Sanity warnings
 if metrics.get("total_return", 0) > 200:
