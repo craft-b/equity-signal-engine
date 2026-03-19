@@ -6,6 +6,8 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 
 ## Demo
 
+![Dashboard screenshot](docs/screenshot.png)
+
 **[Live demo](https://equity-signal-engine-ajalyncnnkbsqpdfhkdtjd.streamlit.app)**
 
 ## Quickstart
