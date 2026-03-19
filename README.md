@@ -40,11 +40,13 @@ equity-signal-engine/
 │   ├── data_pipeline.py        # Data fetching + sklearn Pipeline
 │   ├── models.py               # Model training + evaluation
 │   ├── backtest.py             # Event-driven backtest engine
+│   ├── walk_forward.py         # Walk-forward OOS validation engine
 │   └── utils.py                # Plotly chart builders
 ├── tests/
-│   ├── test_data_pipeline.py   # 27 tests
-│   ├── test_models.py          # 22 tests
-│   └── test_backtest.py        # 26 tests
+│   ├── test_data_pipeline.py   # 28 tests
+│   ├── test_models.py          # 23 tests
+│   ├── test_backtest.py        # 32 tests
+│   └── test_walk_forward.py    # 13 tests
 ├── notebooks/
 │   └── jane_trading.ipynb      # Exploratory analysis
 ├── .github/workflows/
@@ -55,7 +57,7 @@ equity-signal-engine/
 
 ## Tests
 
-75 tests across the full pipeline, run automatically on every push:
+96 tests across the full pipeline, run automatically on every push:
 
 ```bash
 pytest tests/

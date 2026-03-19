@@ -27,8 +27,11 @@ from utils import (
     build_drawdown_chart,
     build_feature_importance_chart,
     build_performance_chart,
+    build_walk_forward_chart,
     summarise_trades,
+    summarise_walk_forward_folds,
 )
+from walk_forward import WalkForwardConfig, walk_forward_backtest
 
 st.set_page_config(page_title="Strategy Backtest", layout="wide")
 st.title("Strategy Backtest")
@@ -63,6 +66,21 @@ model_type = st.sidebar.selectbox(
 with st.sidebar.expander("Advanced"):
     min_confidence = st.slider("Min ML Confidence", 0.50, 0.80, 0.55, 0.05)
     enable_shorts = st.checkbox("Enable Short Positions", value=False)
+
+st.sidebar.subheader("Walk-Forward Validation")
+run_wf = st.sidebar.checkbox(
+    "Run Walk-Forward",
+    value=False,
+    help="Retrain on each expanding window and test OOS — the honest performance estimate.",
+)
+if run_wf:
+    with st.sidebar.expander("Walk-Forward Settings"):
+        wf_min_train = st.slider("Min Train Bars", 100, 500, 252,
+                                  help="Minimum training history before first OOS fold.")
+        wf_test_bars = st.slider("Test Bars per Fold", 21, 126, 63,
+                                  help="OOS bars per fold. 63 ≈ 1 quarter.")
+        wf_expanding = st.radio("Window Type", ["Expanding", "Rolling"],
+                                 help="Expanding: train on all history. Rolling: fixed lookback.") == "Expanding"
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +129,7 @@ st.success(
 )
 
 # 2. Add target --------------------------------------------------------------
+df_features = df.copy()  # preserve pre-target df for walk-forward
 df = add_target(df, holding_period, threshold_pct)
 
 # 3. Train model (optional) --------------------------------------------------
@@ -210,6 +229,101 @@ if train_result and train_result.feature_importance is not None:
 if not trades_df.empty:
     with st.expander(f"Trade Log ({len(trades_df)} trades)"):
         st.dataframe(summarise_trades(trades_df), use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Walk-Forward Validation
+# ---------------------------------------------------------------------------
+
+if run_wf:
+    st.header("Walk-Forward Validation")
+    st.caption(
+        "Each fold trains on all prior data and tests on the next OOS window — "
+        "mimicking live deployment. OOS Sharpe is the most trustworthy performance estimate."
+    )
+
+    wf_config = WalkForwardConfig(
+        min_train_bars=wf_min_train,
+        test_bars=wf_test_bars,
+        expanding=wf_expanding,
+    )
+    wf_bt_config = BacktestConfig(
+        max_position_pct=max_position_pct,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+        max_holding_days=holding_period,
+        transaction_cost_pct=transaction_cost_pct,
+        min_confidence=min_confidence,
+        enable_shorts=enable_shorts,
+    )
+    wf_model_cfg = ModelConfig(model_type=model_type, calibrate=True) if model_type != "Technical Only" else None
+
+    def make_train_fn(hp: int, tp: float, mcfg):
+        def _train(df_fold: pd.DataFrame):
+            if mcfg is None:
+                return None, None
+            df_fold_t = add_target(df_fold, hp, tp)
+            result = train_model(df_fold_t, mcfg)
+            if result is None:
+                return None, None
+            return result.model, result.feature_cols
+        return _train
+
+    with st.spinner(f"Running walk-forward ({wf_test_bars}-bar folds)…"):
+        wf_folds, wf_summary = walk_forward_backtest(
+            df_features, make_train_fn(holding_period, threshold_pct, wf_model_cfg),
+            wf_bt_config, wf_config,
+        )
+
+    if "error" in wf_summary:
+        st.error(f"Walk-forward error: {wf_summary['error']}")
+    else:
+        # Summary metrics
+        w1, w2, w3, w4 = st.columns(4)
+        w1.metric("OOS Sharpe", f"{wf_summary['oos_sharpe']:.2f}",
+                  help="Sharpe computed on concatenated OOS daily returns.")
+        w2.metric("OOS Sortino", f"{wf_summary['oos_sortino']:.2f}")
+        w3.metric("OOS Total Return", f"{wf_summary['oos_total_return']:.2f}%",
+                  help="Compounded return across all OOS folds.")
+        w4.metric("Profitable Folds", f"{wf_summary['pct_profitable_folds']:.0f}%",
+                  help="% of folds with positive return.")
+
+        w5, w6, w7, w8 = st.columns(4)
+        w5.metric("Folds", wf_summary["n_folds"])
+        w6.metric("Total OOS Trades", wf_summary["total_trades"])
+        w7.metric(
+            "Mean Fold Return",
+            f"{wf_summary['mean_fold_return']:.2f}%",
+            f"± {wf_summary['std_fold_return']:.2f}%",
+        )
+        w8.metric(
+            "Mean Fold Sharpe",
+            f"{wf_summary['mean_sharpe']:.2f}",
+            f"± {wf_summary['std_sharpe']:.2f}",
+        )
+
+        # In-sample vs OOS comparison
+        is_sharpe = metrics.get("sharpe_ratio", 0)
+        oos_sharpe = wf_summary["oos_sharpe"]
+        if is_sharpe > 0 and oos_sharpe < is_sharpe * 0.5:
+            st.warning(
+                f"OOS Sharpe ({oos_sharpe:.2f}) is less than half of in-sample "
+                f"({is_sharpe:.2f}) — possible overfitting."
+            )
+        elif oos_sharpe >= is_sharpe * 0.8:
+            st.success(
+                f"OOS Sharpe ({oos_sharpe:.2f}) is close to in-sample "
+                f"({is_sharpe:.2f}) — strategy generalises well."
+            )
+
+        # OOS equity curve
+        st.plotly_chart(
+            build_walk_forward_chart(wf_folds, bt_config.initial_capital),
+            use_container_width=True,
+        )
+
+        # Per-fold breakdown
+        with st.expander("Per-Fold Breakdown"):
+            st.dataframe(summarise_walk_forward_folds(wf_folds), use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.caption("For educational and research purposes only. Not financial advice.")

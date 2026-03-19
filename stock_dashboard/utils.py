@@ -156,6 +156,94 @@ def build_feature_importance_chart(importance_df: pd.DataFrame, top_n: int = 15)
     return fig
 
 
+def build_walk_forward_chart(folds: list, initial_capital: float = 100_000.0) -> go.Figure:
+    """
+    OOS equity curve stitched across all walk-forward folds.
+
+    Each fold's portfolio is rescaled so it begins where the previous fold
+    ended, producing a single continuous OOS equity curve.  Vertical dotted
+    lines mark fold boundaries.
+    """
+    fig = go.Figure()
+
+    dates: List = []
+    values: List[float] = []
+    capital = initial_capital
+
+    for fold in folds:
+        if not fold.portfolio_history or "error" in fold.metrics:
+            continue
+
+        ph = np.array(fold.portfolio_history, dtype=float)
+        # Rescale so this fold starts at current running capital
+        scale = capital / ph[0] if ph[0] > 0 else 1.0
+        ph_scaled = ph * scale
+
+        n = len(ph_scaled)
+        fold_dates = pd.bdate_range(fold.test_start, periods=n)[:n]
+        dates.extend(fold_dates.tolist())
+        values.extend(ph_scaled.tolist())
+        capital = float(ph_scaled[-1])
+
+    if not dates:
+        return go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=values,
+        name="OOS Strategy",
+        line=dict(color="orange", width=2),
+    ))
+    fig.add_hline(
+        y=initial_capital,
+        line_dash="dash",
+        line_color="gray",
+        opacity=0.6,
+        annotation_text="Initial capital",
+        annotation_position="bottom right",
+    )
+
+    # Fold boundary markers (skip first — that's the start)
+    for fold in folds[1:]:
+        fig.add_vline(
+            x=str(fold.test_start.date()),
+            line_dash="dot",
+            line_color="rgba(255,255,255,0.25)",
+        )
+
+    fig.update_layout(
+        title="Walk-Forward OOS Equity Curve",
+        yaxis_title="Portfolio Value ($)",
+        template="plotly_dark",
+        height=350,
+        margin=dict(l=40, r=20, t=50, b=30),
+        showlegend=True,
+    )
+    return fig
+
+
+def summarise_walk_forward_folds(folds: list) -> pd.DataFrame:
+    """Return a display-ready per-fold metrics table."""
+    rows = []
+    for f in folds:
+        m = f.metrics
+        if "error" in m:
+            continue
+        rows.append({
+            "Fold": f.fold + 1,
+            "Train Start": str(f.train_start.date()),
+            "Test Period": f"{f.test_start.date()} → {f.test_end.date()}",
+            "Train Bars": f.n_train_bars,
+            "Trades": m.get("num_trades", 0),
+            "Return %": f"{m.get('total_return', 0):.2f}%",
+            "Sharpe": f"{m.get('sharpe_ratio', 0):.2f}",
+            "Win Rate": f"{m.get('win_rate', 0):.1f}%",
+            "Max DD": f"{m.get('max_drawdown', 0):.2f}%",
+            "Model": "ML" if f.model_trained else "SMA",
+        })
+    return pd.DataFrame(rows)
+
+
 def summarise_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
     """Return a display-ready trades summary (most recent first)."""
     if trades_df.empty:
