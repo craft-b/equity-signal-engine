@@ -23,10 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from backtest import BacktestConfig, run_backtest
 from data_pipeline import PipelineConfig, process_stock_data
 from models import ModelConfig, TrainResult, train_model
+from regimes import classify_vol_regimes, regime_performance
+from stats import bootstrap_sharpe_ci, ttest_mean_return
 from utils import (
     build_drawdown_chart,
     build_feature_importance_chart,
     build_performance_chart,
+    build_regime_chart,
     build_walk_forward_chart,
     summarise_trades,
     summarise_walk_forward_folds,
@@ -206,6 +209,50 @@ if metrics.get("num_trades", 0) < 5:
 if abs(metrics.get("max_drawdown", 0)) > 30:
     st.warning("Max drawdown > 30% — strategy carries significant tail risk.")
 
+# Statistical significance
+if portfolio_history and len(portfolio_history) >= 20:
+    with st.expander("Statistical Significance", expanded=False):
+        daily_rets = pd.Series(portfolio_history).pct_change().dropna().values
+
+        with st.spinner("Bootstrapping Sharpe CI…"):
+            ci_lo, ci_hi, _ = bootstrap_sharpe_ci(daily_rets, n_boot=1000)
+        t_stat, p_value = ttest_mean_return(daily_rets)
+
+        sc1, sc2 = st.columns(2)
+
+        if np.isfinite(ci_lo) and np.isfinite(ci_hi):
+            sc1.metric(
+                "Sharpe 95% CI",
+                f"[{ci_lo:.2f}, {ci_hi:.2f}]",
+                help="Bootstrap 95% confidence interval for the annualised Sharpe ratio (1 000 resamples). "
+                     "A CI that excludes zero suggests the Sharpe is likely genuine.",
+            )
+            if ci_lo > 0:
+                sc1.success("CI excludes zero — Sharpe likely positive.")
+            elif ci_hi < 0:
+                sc1.error("CI entirely negative — strategy underperforms risk-free.")
+            else:
+                sc1.info("CI straddles zero — Sharpe is not reliably positive.")
+        else:
+            sc1.info("Insufficient data to compute Sharpe CI.")
+
+        if np.isfinite(p_value):
+            alpha = 0.05
+            sig_label = "significant" if p_value < alpha else "not significant"
+            sc2.metric(
+                "Mean Return p-value",
+                f"{p_value:.4f}",
+                delta=f"t = {t_stat:.2f}",
+                help="One-sample t-test: H₀ = mean daily return is zero. "
+                     "p < 0.05 rejects the null and suggests returns are non-zero.",
+            )
+            if p_value < alpha:
+                sc2.success(f"p = {p_value:.4f} — mean return is statistically {sig_label} (α = {alpha}).")
+            else:
+                sc2.warning(f"p = {p_value:.4f} — mean return is {sig_label} (α = {alpha}). Interpret results cautiously.")
+        else:
+            sc2.info("Insufficient data to compute t-test.")
+
 # Charts
 if portfolio_history:
     st.plotly_chart(
@@ -229,6 +276,59 @@ if train_result and train_result.feature_importance is not None:
 if not trades_df.empty:
     with st.expander(f"Trade Log ({len(trades_df)} trades)"):
         st.dataframe(summarise_trades(trades_df), use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Volatility Regime Analysis
+# ---------------------------------------------------------------------------
+
+st.header("Volatility Regime Analysis")
+st.caption(
+    "Rolling realised volatility classifies each bar as Low / Medium / High. "
+    "Performance broken down by regime reveals whether the strategy thrives "
+    "in calm or turbulent markets."
+)
+
+vol_window = st.slider("Vol Window (bars)", 5, 60, 20, key="vol_window",
+                       help="Rolling window for computing annualised volatility.")
+
+df_regimes, regime_thresh = classify_vol_regimes(df, window=vol_window)
+
+st.plotly_chart(
+    build_regime_chart(df_regimes, regime_thresh),
+    use_container_width=True,
+)
+
+if not trades_df.empty:
+    reg_perf = regime_performance(trades_df, df_regimes)
+    if not reg_perf.empty:
+        r1, r2, r3 = st.columns(3)
+        cols = [r1, r2, r3]
+        regime_label_color = {"Low": "green", "Medium": "orange", "High": "red"}
+        for col, (_, row) in zip(cols, reg_perf.iterrows()):
+            label = row["Regime"]
+            trades_n = int(row["Trades"])
+            wr = row["Win Rate %"]
+            pnl = row["Total P&L ($)"]
+            col.metric(
+                f"{label} Vol — {trades_n} trades",
+                f"Win Rate: {wr:.1f}%" if not pd.isna(wr) else "No trades",
+                delta=f"P&L: ${pnl:,.0f}" if trades_n > 0 else None,
+                help=f"Trades entered during {label.lower()} volatility regime.",
+            )
+
+        with st.expander("Per-Regime Breakdown"):
+            st.dataframe(
+                reg_perf.style.format({
+                    "Win Rate %": "{:.1f}",
+                    "Avg Return %": "{:.2f}",
+                    "Total P&L ($)": "${:,.2f}",
+                    "Avg Days Held": "{:.1f}",
+                }, na_rep="—"),
+                use_container_width=True,
+                hide_index=True,
+            )
+else:
+    st.info("Run a backtest with at least one trade to see regime performance.")
 
 # ---------------------------------------------------------------------------
 # Walk-Forward Validation

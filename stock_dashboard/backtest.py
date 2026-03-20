@@ -130,6 +130,15 @@ def run_backtest(
     # ---------- Signal generation ----------
     bt["_signal"] = _generate_signals(bt, model, feature_cols, config)
 
+    # ---------- Extract numpy arrays (eliminates per-bar pandas overhead) ----------
+    prices: np.ndarray = bt["Close"].to_numpy(dtype=np.float64)
+    signals: np.ndarray = bt["_signal"].to_numpy(dtype=np.int8)
+    dates: np.ndarray = bt["Date"].to_numpy()
+
+    # Pre-allocate portfolio history as a contiguous array
+    portfolio_history_arr = np.empty(len(bt), dtype=np.float64)
+    portfolio_history_arr[0] = config.initial_capital
+
     # ---------- Simulation state ----------
     cash = config.initial_capital
     position = 0        # 1 = long, -1 = short, 0 = flat
@@ -139,16 +148,15 @@ def run_backtest(
     entry_idx = 0
 
     trades: List[Trade] = []
-    portfolio_history: List[float] = [config.initial_capital]
 
-    # ---------- Main loop ----------
+    # ---------- Main loop (path-dependent — must stay sequential) ----------
     for i in range(1, len(bt)):
-        price = bt.loc[i, "Close"]
-        signal = bt.loc[i, "_signal"]
-        date = bt.loc[i, "Date"]
+        price = prices[i]
+        signal = int(signals[i])
+        date = dates[i]
 
         if price <= 0 or np.isnan(price):
-            portfolio_history.append(portfolio_history[-1])
+            portfolio_history_arr[i] = portfolio_history_arr[i - 1]
             continue
 
         # Mark-to-market
@@ -157,8 +165,7 @@ def run_backtest(
         # ---------- Exit logic ----------
         if position != 0:
             days_held = i - entry_idx
-            price_chg_pct = (price - entry_price) / entry_price
-            unrealized_pct = price_chg_pct * position  # positive = profit
+            unrealized_pct = (price - entry_price) / entry_price * position
 
             exit_reason = None
             if unrealized_pct <= -config.stop_loss_pct:
@@ -171,15 +178,10 @@ def run_backtest(
                 exit_reason = "Signal Reversal"
 
             if exit_reason:
-                # Realise P&L
-                if position == 1:
-                    gross_pnl = shares * (price - entry_price)
-                else:
-                    gross_pnl = shares * (entry_price - price)
-
+                gross_pnl = shares * (price - entry_price) * position
                 transaction_fee = shares * price * config.transaction_cost_pct
                 net_pnl = gross_pnl - transaction_fee
-                cash += (shares * entry_price * position) + net_pnl  # return notional + profit
+                cash += shares * entry_price * position + net_pnl
 
                 trades.append(Trade(
                     entry_date=entry_date,
@@ -201,7 +203,7 @@ def run_backtest(
 
         # ---------- Entry logic ----------
         if position == 0 and signal != 0:
-            position = int(signal)
+            position = signal
             entry_price = price
             entry_date = date
             entry_idx = i
@@ -209,23 +211,21 @@ def run_backtest(
             notional = portfolio_value * config.max_position_pct
             shares = notional / price
             transaction_fee = notional * config.transaction_cost_pct
-            cash -= (notional + transaction_fee)  # deduct cost basis + fee
+            cash -= notional + transaction_fee
             portfolio_value = cash + shares * price
 
-        portfolio_history.append(portfolio_value)
+        portfolio_history_arr[i] = portfolio_value
 
     # ---------- Close any open position at end ----------
-    if position != 0 and len(bt) > 0:
-        final_price = bt["Close"].iloc[-1]
-        if position == 1:
-            gross_pnl = shares * (final_price - entry_price)
-        else:
-            gross_pnl = shares * (entry_price - final_price)
+    if position != 0:
+        final_price = prices[-1]
+        gross_pnl = shares * (final_price - entry_price) * position
         transaction_fee = shares * final_price * config.transaction_cost_pct
         net_pnl = gross_pnl - transaction_fee
-        cash += (shares * entry_price * position) + net_pnl
-        portfolio_history[-1] = cash
+        cash += shares * entry_price * position + net_pnl
+        portfolio_history_arr[-1] = cash
 
+    portfolio_history: List[float] = portfolio_history_arr.tolist()
     final_value = portfolio_history[-1]
 
     # ---------- Metrics ----------

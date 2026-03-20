@@ -244,6 +244,56 @@ def summarise_walk_forward_folds(folds: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def build_regime_chart(
+    df_with_regimes: pd.DataFrame,
+    thresholds: Dict,
+) -> go.Figure:
+    """
+    Rolling annualised volatility chart with Low / Medium / High regime bands.
+
+    The background is shaded per-regime so the viewer can immediately see
+    when the strategy was operating in calm vs turbulent conditions.
+    """
+    from regimes import REGIME_COLORS
+
+    fig = go.Figure()
+
+    vol = df_with_regimes["Rolling_Vol"].dropna()
+    dates = df_with_regimes["Date"].iloc[vol.index]
+
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=vol,
+        name="Rolling Vol (ann.)",
+        line=dict(color="#4C9BE8", width=1.5),
+    ))
+
+    # Threshold lines
+    fig.add_hline(
+        y=thresholds["low"], line_dash="dash", line_color=REGIME_COLORS["Low"],
+        opacity=0.7,
+        annotation_text=f"Low/Med boundary ({thresholds['low_pct']:.0f}th pct)",
+        annotation_position="bottom right",
+    )
+    fig.add_hline(
+        y=thresholds["high"], line_dash="dash", line_color=REGIME_COLORS["High"],
+        opacity=0.7,
+        annotation_text=f"Med/High boundary ({thresholds['high_pct']:.0f}th pct)",
+        annotation_position="top right",
+    )
+
+    fig.update_layout(
+        title=f"Rolling {thresholds['window']}-Bar Annualised Volatility with Regimes",
+        yaxis_title="Annualised Vol",
+        yaxis_tickformat=".0%",
+        template="plotly_dark",
+        height=300,
+        margin=dict(l=40, r=20, t=50, b=30),
+        showlegend=True,
+    )
+    return fig
+
+
 def summarise_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
     """Return a display-ready trades summary (most recent first)."""
     if trades_df.empty:
