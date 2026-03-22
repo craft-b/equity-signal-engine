@@ -23,14 +23,16 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-try:
-    from evidently.report import Report
-    from evidently.metric_preset import DataDriftPreset
-    from evidently.metrics import ColumnDriftMetric, DatasetDriftMetric
-    _EVIDENTLY_AVAILABLE = True
-except ImportError:
-    _EVIDENTLY_AVAILABLE = False
-    logger.warning("evidently not installed — drift detection unavailable")
+
+def _import_evidently():
+    """Lazy import — deferred so a version-incompatibility never crashes startup."""
+    try:
+        from evidently.report import Report  # noqa: F401
+        from evidently.metrics import ColumnDriftMetric, DatasetDriftMetric  # noqa: F401
+        return True
+    except Exception as exc:
+        logger.warning("evidently unavailable (%s) — drift detection disabled", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +84,11 @@ def detect_feature_drift(
           n_features_checked int
           error              str    — set only when detection could not run
     """
-    if not _EVIDENTLY_AVAILABLE:
-        return {"error": "evidently not installed", "dataset_drift": False}
+    if not _import_evidently():
+        return {"error": "evidently not available", "dataset_drift": False}
+
+    from evidently.report import Report
+    from evidently.metrics import ColumnDriftMetric, DatasetDriftMetric
 
     cols = _select_feature_cols(reference_df, feature_cols)
 
@@ -154,8 +159,11 @@ def generate_drift_report_html(
 
     Returns an empty string if evidently is not installed or an error occurs.
     """
-    if not _EVIDENTLY_AVAILABLE:
+    if not _import_evidently():
         return ""
+
+    from evidently.report import Report
+    from evidently.metrics import ColumnDriftMetric, DatasetDriftMetric
 
     cols = _select_feature_cols(reference_df, feature_cols)
     if not cols:
