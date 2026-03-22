@@ -8,7 +8,7 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 
 ![Dashboard screenshot](docs/screenshot.png)
 
-**[Live demo](https://equity-signal-engine-ajalyncnnkbsqpdfhkdtjd.streamlit.app)**
+**[Live dashboard](https://equity-signal-engine-ajalyncnnkbsqpdfhkdtjd.streamlit.app)** | **[REST API](https://equity-signal-engine.onrender.com/docs)**
 
 ## Quickstart
 
@@ -32,6 +32,8 @@ This project builds a supervised learning pipeline for short-term equity directi
 - Bootstrap Sharpe 95% CI (1 000 resamples) and t-test for mean return significance
 - Volatility regime detection (rolling percentile) with per-regime trade performance breakdown
 - Multi-page Streamlit dashboard for interactive strategy exploration
+- FastAPI REST service (`POST /predict`, `POST /drift`) deployed on Render with auto-generated `/docs`
+- Evidently AI feature drift detection with per-column KS-test results
 
 ## Project Structure
 
@@ -48,7 +50,11 @@ equity-signal-engine/
 │   ├── walk_forward.py         # Walk-forward OOS validation engine
 │   ├── stats.py                # Bootstrap Sharpe CI + significance testing
 │   ├── regimes.py              # Volatility regime detection + per-regime stats
+│   ├── monitoring.py           # Evidently drift detection
 │   └── utils.py                # Plotly chart builders
+├── api/
+│   ├── main.py                 # FastAPI service (predict + drift endpoints)
+│   └── schemas.py              # Pydantic request/response models
 ├── tests/
 │   ├── test_data_pipeline.py   # 28 tests
 │   ├── test_models.py          # 23 tests
@@ -56,7 +62,9 @@ equity-signal-engine/
 │   ├── test_walk_forward.py    # 13 tests
 │   ├── test_stats.py           # 18 tests
 │   ├── test_regimes.py         # 21 tests
-│   └── test_benchmark.py       # 5 tests (timing + equivalence)
+│   ├── test_benchmark.py       # 5 tests (timing + equivalence)
+│   ├── test_monitoring.py      # 15 tests
+│   └── test_api.py             # 17 tests
 ├── notebooks/
 │   └── jane_trading.ipynb      # Exploratory analysis
 ├── .github/workflows/
@@ -67,7 +75,7 @@ equity-signal-engine/
 
 ## Tests
 
-140 tests across the full pipeline, run automatically on every push:
+177 tests across the full pipeline, run automatically on every push:
 
 ```bash
 pytest tests/
@@ -83,6 +91,8 @@ pytest tests/
 | Statistics | `scipy` (bootstrap CI, t-test) |
 | Backtesting | Custom event-driven engine (NumPy-vectorized) |
 | Dashboard | `streamlit`, `plotly` |
+| REST API | `fastapi`, `uvicorn` (deployed on Render) |
+| Drift monitoring | `evidently` |
 | CI | GitHub Actions |
 
 ## Key Design Decisions
