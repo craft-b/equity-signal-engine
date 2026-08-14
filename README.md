@@ -17,23 +17,23 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 
 | | In-sample | Walk-forward (OOS) | Buy & hold |
 |---|---:|---:|---:|
-| Total return | 28.2% | **1.2%** | **265.7%** |
-| Sharpe | 1.55 | **0.07** | 0.86 |
-| Trades | 61 | 63 | 1 |
+| Total return | 18.8% | **-0.2%** | **265.9%** |
+| Sharpe | 1.01 | **0.00** | 0.87 |
+| Trades | 63 | 61 | 1 |
 
-Bootstrap Sharpe 95% CI on OOS daily returns: **[-0.66, 0.77]**
-t-test on mean daily return: **t = 0.21, p = 0.84**
+Bootstrap Sharpe 95% CI on OOS daily returns: **[-0.67, 0.72]**
+t-test on mean daily return: **t = 0.01, p = 0.99**
 
 ### There is no statistically detectable edge
 
 The confidence interval comfortably includes zero and the strategy is beaten
-by roughly 265 percentage points by doing nothing at all. This is the finding,
+by roughly 266 percentage points by doing nothing at all. This is the finding,
 and it is reported rather than buried.
 
 Three things are worth drawing out.
 
-**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.55
-in-sample against 0.07 out-of-sample is what fitting a model on the rows you
+**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.01
+in-sample against 0.00 out-of-sample is what fitting a model on the rows you
 then score it on buys you. The dashboard still displays the in-sample panel,
 explicitly labelled as such, because that gap is the most useful thing the
 project has to teach.
@@ -49,6 +49,13 @@ folds the model scored AUC 0.674. Adding `gap=label_horizon` to
 `TimeSeriesSplit` — so no training label is computed from a price inside the
 test fold — drops it to **AUC 0.511, accuracy 0.499**. A coin flip. That
 difference was leakage, not signal.
+
+**Filling on the signal bar was worth the entire remaining result.** The
+backtest originally read the signal at bar *i* and filled at that same bar's
+close — observing a price and then trading at it. Adding a one-bar execution
+lag (`BacktestConfig.execution_lag_bars`, decide at today's close, fill at
+tomorrow's) moved OOS return from +1.2% to **-0.2%** and Sharpe from 0.07 to
+**0.00**. Set it to 0 to reproduce the optimistic version.
 
 The February–March 2020 fold is the worst single window: -3.9% across 15
 trades as the model traded actively into the COVID drawdown. Regime-conditional

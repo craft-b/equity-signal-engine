@@ -158,9 +158,8 @@ if model_type != "Technical Only":
         # than rendering it in a green success box.
         if acc < 0.55 or auc < 0.55:
             st.warning(
-                note + "  
-
-This is close to chance on a binary target. "
+                note
+                + "\n\nThis is close to chance on a binary target. "
                 "Treat any downstream backtest as unsupported by the model."
             )
         else:

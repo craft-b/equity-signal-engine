@@ -39,6 +39,13 @@ class BacktestConfig:
     min_confidence: float = 0.55        # ML probability threshold for entry
     enable_shorts: bool = False
 
+    # Bars between generating a signal and filling on it. Features at bar i
+    # include bar i's close, so a fill at that same close is not achievable —
+    # you would be trading on a price you have only just observed. 1 bar means
+    # "decide at today's close, fill at tomorrow's". Set to 0 only to
+    # reproduce the earlier, optimistic behaviour.
+    execution_lag_bars: int = 1
+
 
 # ---------------------------------------------------------------------------
 # Core engine
@@ -128,7 +135,20 @@ def run_backtest(
         return pd.DataFrame(), {"error": "Invalid prices in backtest input"}, []
 
     # ---------- Signal generation ----------
-    bt["_signal"] = _generate_signals(bt, model, feature_cols, config)
+    #
+    # Execution lag. The signal at bar i is derived from features that include
+    # bar i's close, so it cannot be acted on until bar i+1. Filling at the
+    # same bar's close would mean observing the closing price and then trading
+    # at it — a look-ahead worth roughly the overnight move on every entry.
+    #
+    # Shifting by `execution_lag_bars` bars makes the simulation causal: the
+    # decision made with information through bar i is executed at bar i+1.
+    bt["_signal"] = (
+        _generate_signals(bt, model, feature_cols, config)
+        .shift(config.execution_lag_bars)
+        .fillna(0)
+        .astype(int)
+    )
 
     # ---------- Extract numpy arrays (eliminates per-bar pandas overhead) ----------
     prices: np.ndarray = bt["Close"].to_numpy(dtype=np.float64)

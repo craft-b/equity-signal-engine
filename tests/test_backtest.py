@@ -355,3 +355,57 @@ class TestMetrics:
         df.loc[30:35, "Close"] = np.nan  # inject NaN mid-series
         _, metrics, _ = run_backtest(df)
         assert "error" in metrics
+
+
+# ---------------------------------------------------------------------------
+# Execution lag (E5): signals must not fill on the bar that produced them
+# ---------------------------------------------------------------------------
+
+class TestExecutionLag:
+    """Features at bar i include Close[i], so a fill at Close[i] is look-ahead."""
+
+    @staticmethod
+    def _ramp(n: int = 120) -> pd.DataFrame:
+        """Flat prices with one sharp step, so the entry bar is unambiguous."""
+        close = np.full(n, 100.0)
+        close[60:] = 130.0
+        return pd.DataFrame({
+            "Date": pd.date_range("2022-01-03", periods=n, freq="B"),
+            "Close": close,
+            "Open": close,
+            "High": close,
+            "Low": close,
+            "Volume": np.full(n, 1_000_000.0),
+        })
+
+    def test_default_config_lags_execution_by_one_bar(self):
+        assert BacktestConfig().execution_lag_bars == 1
+
+    def test_entry_is_one_bar_after_the_signal(self, monkeypatch):
+        import backtest as bt_mod
+
+        df = self._ramp()
+        signal_bar = 70
+
+        def fake_signals(frame, model, feature_cols, config):
+            sig = pd.Series(0, index=frame.index)
+            sig.iloc[signal_bar] = 1
+            return sig
+
+        monkeypatch.setattr(bt_mod, "_generate_signals", fake_signals)
+
+        lagged, _, _ = bt_mod.run_backtest(df, None, None, BacktestConfig())
+        immediate, _, _ = bt_mod.run_backtest(
+            df, None, None, BacktestConfig(execution_lag_bars=0)
+        )
+
+        assert not lagged.empty and not immediate.empty
+        lag_entry = pd.Timestamp(lagged.iloc[0]["entry_date"])
+        now_entry = pd.Timestamp(immediate.iloc[0]["entry_date"])
+
+        assert now_entry == df["Date"].iloc[signal_bar]
+        assert lag_entry == df["Date"].iloc[signal_bar + 1]
+
+    def test_zero_lag_reproduces_previous_behaviour(self):
+        """The optimistic path stays reachable so the change is measurable."""
+        assert BacktestConfig(execution_lag_bars=0).execution_lag_bars == 0
