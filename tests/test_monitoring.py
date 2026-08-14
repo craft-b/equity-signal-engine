@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import importlib.util
+
 import pytest
 
 from monitoring import _select_feature_cols, detect_feature_drift, generate_drift_report_html
@@ -96,6 +98,10 @@ class TestDetectFeatureDrift:
         assert result["drift_share"] > 0.0
         assert len(result["drifted_features"]) > 0
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("evidently") is None,
+        reason="evidently is optional; monitoring.py returns an error dict without it",
+    )
     def test_result_keys_present(self):
         ref = make_feature_df(n=100)
         cur = make_feature_df(n=100, shift=0.0)

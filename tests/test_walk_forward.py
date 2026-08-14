@@ -130,12 +130,47 @@ class TestDateIntegrity:
     def test_rolling_window_train_size_stays_fixed(self):
         df = make_processed_df(n=600)
         roll = 200
+        embargo = 5
         wf_cfg = WalkForwardConfig(min_train_bars=200, test_bars=50,
-                                    expanding=False, rolling_train_bars=roll)
+                                    expanding=False, rolling_train_bars=roll,
+                                    embargo_bars=embargo)
         folds, _ = walk_forward_backtest(df, technical_train_fn, BT_CONFIG, wf_cfg)
-        # All folds (except possibly the first) should have exactly roll bars
+        # Each rolling window is `roll` bars minus the embargo held back at
+        # the test boundary.
         for f in folds[1:]:
-            assert f.n_train_bars == roll
+            assert f.n_train_bars == roll - embargo
+
+    def test_embargo_leaves_a_gap_before_the_test_window(self):
+        """The label horizon must not straddle the train/test boundary.
+
+        The target at row i is a forward return computed from Close[i+horizon].
+        Without an embargo the last `horizon` training labels are derived from
+        prices inside the test window, so the model trains on the answer.
+        """
+        df = make_processed_df(n=600)
+        embargo = 5
+        wf_cfg = WalkForwardConfig(min_train_bars=200, test_bars=50,
+                                    expanding=True, embargo_bars=embargo)
+        folds, _ = walk_forward_backtest(df, technical_train_fn, BT_CONFIG, wf_cfg)
+
+        assert folds, "expected at least one fold"
+        dates = list(df["Date"])
+        for f in folds:
+            gap = dates.index(f.test_start) - dates.index(f.train_end)
+            assert gap > embargo, (
+                f"fold {f.fold}: only {gap} bars between train_end and "
+                f"test_start, need more than the {embargo}-bar label horizon"
+            )
+
+    def test_zero_embargo_reproduces_adjacent_windows(self):
+        """embargo_bars=0 restores the original contiguous split."""
+        df = make_processed_df(n=600)
+        wf_cfg = WalkForwardConfig(min_train_bars=200, test_bars=50,
+                                    expanding=False, rolling_train_bars=200,
+                                    embargo_bars=0)
+        folds, _ = walk_forward_backtest(df, technical_train_fn, BT_CONFIG, wf_cfg)
+        for f in folds[1:]:
+            assert f.n_train_bars == 200
 
 
 # ---------------------------------------------------------------------------

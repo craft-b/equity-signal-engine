@@ -422,7 +422,18 @@ def process_stock_data(
             "price_range": (processed["Close"].min(), processed["Close"].max()),
         }
 
-        return {"success": True, "data": processed, "error": None, "summary": summary, "pipeline": pipe}
+        # "raw" and "config" are returned so callers doing walk-forward can
+        # refit preprocessing inside each fold rather than reusing this
+        # whole-series fit, which would leak test statistics.
+        return {
+            "success": True,
+            "data": processed,
+            "error": None,
+            "summary": summary,
+            "pipeline": pipe,
+            "raw": raw,
+            "config": config,
+        }
 
     except Exception as exc:
         logger.error("Pipeline error: %s", exc)

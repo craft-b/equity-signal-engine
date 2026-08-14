@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 class ModelConfig:
     model_type: str = "Random Forest"      # "Random Forest" | "Logistic Regression"
     n_cv_splits: int = 5                   # TimeSeriesSplit folds
+    # Gap between each CV train and test window, in bars. The label is a
+    # forward return over this many bars, so without a gap the last
+    # `label_horizon` training labels are computed from prices inside the
+    # test fold. Reported CV metrics are optimistic without it.
+    label_horizon: int = 5
     min_train_samples: int = 100
     min_feature_count: int = 5
     calibrate: bool = True                 # Apply isotonic calibration
@@ -212,7 +217,8 @@ def train_model(
         return None
 
     n_splits = min(config.n_cv_splits, max(2, len(X) // 50))
-    tscv = TimeSeriesSplit(n_splits=n_splits)
+    # gap= embargoes the label-overlap window between train and test.
+    tscv = TimeSeriesSplit(n_splits=n_splits, gap=config.label_horizon)
 
     cv_acc, cv_prec, cv_rec, cv_f1 = [], [], [], []
     cv_brier, cv_ll, cv_auc = [], [], []

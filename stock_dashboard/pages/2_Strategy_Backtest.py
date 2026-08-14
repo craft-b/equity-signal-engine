@@ -21,7 +21,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backtest import BacktestConfig, run_backtest
-from data_pipeline import PipelineConfig, process_stock_data
+from data_pipeline import PipelineConfig, create_pipeline, process_stock_data
 from models import ModelConfig, TrainResult, train_model
 from regimes import classify_vol_regimes, regime_performance
 from stats import bootstrap_sharpe_ci, ttest_mean_return
@@ -73,8 +73,10 @@ with st.sidebar.expander("Advanced"):
 st.sidebar.subheader("Walk-Forward Validation")
 run_wf = st.sidebar.checkbox(
     "Run Walk-Forward",
-    value=False,
-    help="Retrain on each expanding window and test OOS — the honest performance estimate.",
+    value=True,
+    help="Retrain on each expanding window and test OOS — the honest performance "
+         "estimate. On by default: the in-sample panel below is not a "
+         "performance estimate and should not be read as one.",
 )
 if run_wf:
     with st.sidebar.expander("Walk-Forward Settings"):
@@ -90,15 +92,17 @@ if run_wf:
 # Helpers
 # ---------------------------------------------------------------------------
 
+PIPELINE_CONFIG = PipelineConfig(
+    sma_periods=[5, 10, 20, 50],
+    volatility_windows=[10, 20],
+    return_lags=[1, 2, 5],
+    min_periods=100,
+)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data(ticker: str, period: str) -> dict:
-    config = PipelineConfig(
-        sma_periods=[5, 10, 20, 50],
-        volatility_windows=[10, 20],
-        return_lags=[1, 2, 5],
-        min_periods=100,
-    )
-    return process_stock_data(ticker, period, config)
+    return process_stock_data(ticker, period, PIPELINE_CONFIG)
 
 
 def add_target(df: pd.DataFrame, holding_period: int, threshold_pct: float = 0.5) -> pd.DataFrame:
@@ -144,11 +148,23 @@ if model_type != "Technical Only":
         train_result = train_model(df, cfg)
 
     if train_result:
-        st.success(
-            f"Model trained — CV accuracy {train_result.cv.accuracy:.3f} · "
-            f"AUC-ROC {train_result.cv.auc_roc:.3f} · "
+        acc = train_result.cv.accuracy
+        auc = train_result.cv.auc_roc
+        note = (
+            f"Model trained — CV AUC-ROC {auc:.3f} · accuracy {acc:.3f} · "
             f"Brier {train_result.cv.brier:.3f}"
         )
+        # Accuracy near 0.5 on a binary target is a coin flip. Say so rather
+        # than rendering it in a green success box.
+        if acc < 0.55 or auc < 0.55:
+            st.warning(
+                note + "  
+
+This is close to chance on a binary target. "
+                "Treat any downstream backtest as unsupported by the model."
+            )
+        else:
+            st.info(note)
     else:
         st.warning("Model training failed — using technical signals.")
 
@@ -175,7 +191,15 @@ if "error" in metrics:
 # Results
 # ---------------------------------------------------------------------------
 
-st.header("Performance Summary")
+st.header("In-Sample Fit — not a performance estimate")
+st.warning(
+    "**These numbers are in-sample.** The model was fitted on every row below "
+    "and then scored on those same rows, so they measure how well it memorised "
+    "this history — not how it would have performed. They are shown because "
+    "the gap between them and the walk-forward results is the point. For the "
+    "honest estimate, see **Walk-Forward Validation** below.",
+    icon=None,
+)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric(
@@ -372,6 +396,10 @@ if run_wf:
         wf_folds, wf_summary = walk_forward_backtest(
             df_features, make_train_fn(holding_period, threshold_pct, wf_model_cfg),
             wf_bt_config, wf_config,
+            # Refit scaler, outlier bounds and feature selection inside each
+            # fold so no test-period statistic shapes the training features.
+            raw_df=data.get("raw"),
+            pipeline_factory=lambda: create_pipeline(PIPELINE_CONFIG),
         )
 
     if "error" in wf_summary:
