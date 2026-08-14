@@ -10,6 +10,70 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 
 **[Live dashboard](https://equity-signal-engine-ajalyncnnkbsqpdfhkdtjd.streamlit.app)** | **[REST API](https://equity-signal-engine.onrender.com/docs)**
 
+## Results
+
+**SPY, 10 years (2016-08 to 2026-08), 37 walk-forward folds, 2,183 out-of-sample days.**
+5-day holding, 0.5% signal threshold, 0.1% transaction cost per leg.
+
+| | In-sample | Walk-forward (OOS) | Buy & hold |
+|---|---:|---:|---:|
+| Total return | 28.2% | **1.2%** | **265.7%** |
+| Sharpe | 1.55 | **0.07** | 0.86 |
+| Trades | 61 | 63 | 1 |
+
+Bootstrap Sharpe 95% CI on OOS daily returns: **[-0.66, 0.77]**
+t-test on mean daily return: **t = 0.21, p = 0.84**
+
+### There is no statistically detectable edge
+
+The confidence interval comfortably includes zero and the strategy is beaten
+by roughly 265 percentage points by doing nothing at all. This is the finding,
+and it is reported rather than buried.
+
+Three things are worth drawing out.
+
+**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.55
+in-sample against 0.07 out-of-sample is what fitting a model on the rows you
+then score it on buys you. The dashboard still displays the in-sample panel,
+explicitly labelled as such, because that gap is the most useful thing the
+project has to teach.
+
+**Small samples will lie to you.** On 2 years of data (4 folds, 17 trades) the
+OOS Sharpe came out at 0.93 — and it *rose* when leakage was removed, which is
+the wrong direction and a clear signal the sample could not resolve anything.
+Only at 37 folds does the estimate settle near zero. Any backtest reporting a
+Sharpe off a handful of trades is reporting noise.
+
+**Removing label overlap halved the model's apparent skill.** With adjacent CV
+folds the model scored AUC 0.674. Adding `gap=label_horizon` to
+`TimeSeriesSplit` — so no training label is computed from a price inside the
+test fold — drops it to **AUC 0.511, accuracy 0.499**. A coin flip. That
+difference was leakage, not signal.
+
+The February–March 2020 fold is the worst single window: -3.9% across 15
+trades as the model traded actively into the COVID drawdown. Regime-conditional
+performance is broken out in the dashboard.
+
+### Reproducing it
+
+```bash
+python scripts/measure_oos.py SPY 10y
+```
+
+Prints the table above plus per-fold detail, the bootstrap CI and the
+significance test. Numbers move slightly between runs as the data window rolls
+forward; the conclusion does not.
+
+### What would have to change to find an edge
+
+Daily OHLCV technical indicators on a single liquid index ETF is close to the
+least promising place to look — that information is in the price within
+milliseconds. A serious attempt would need an orthogonal data source
+(fundamentals, positioning, order flow), a cross-sectional universe rather than
+one ticker, and a holding period matched to the horizon at which the signal
+actually decays. The engineering here would support that; the features do not.
+
+
 ## Quickstart
 
 ```bash
@@ -97,7 +161,13 @@ pytest tests/
 
 ## Key Design Decisions
 
-- **No look-ahead bias**: target variable is a forward-shifted return; pipeline steps are fit only on training data
+- **Embargoed validation**: the label is a forward return over `horizon` bars, so
+  training rows within `horizon` of the test window would otherwise be computed from
+  test-period prices. Walk-forward holds back `embargo_bars`, and CV uses
+  `TimeSeriesSplit(gap=label_horizon)`
+- **Preprocessing fit inside each fold**: the scaler, outlier bounds and
+  correlation-based feature selection are fitted on training rows only, then applied
+  to the contiguous train+test span so rolling indicators keep their trailing history
 - **Price columns never scaled**: Close/Open/High/Low remain in dollar terms for backtest accuracy
 - **Time-series CV**: `TimeSeriesSplit` throughout — no random shuffling of temporal data
 - **Depth-constrained Random Forest**: `max_depth=5`, `min_samples_leaf=25` to resist overfitting on noisy financial data
