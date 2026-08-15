@@ -11,6 +11,8 @@ Runs the event-driven backtest engine and displays:
 
 from __future__ import annotations
 
+import logging
+
 import sys
 from pathlib import Path
 
@@ -37,6 +39,8 @@ from utils import (
 from walk_forward import WalkForwardConfig, walk_forward_backtest
 
 st.set_page_config(page_title="Strategy Backtest", layout="wide")
+
+logger = logging.getLogger(__name__)
 st.title("Strategy Backtest")
 st.caption("Event-driven backtest with position sizing, stop-loss/take-profit, and transaction costs")
 
@@ -414,6 +418,19 @@ if run_wf:
             return result.model, result.feature_cols
         return _train
 
+    # Log the resolved configuration. Without this there is no way to tell,
+    # after the fact, what the UI actually ran — which made a UI/script
+    # discrepancy impossible to diagnose.
+    logger.info(
+        "walk-forward config: ticker=%s period=%s holding=%s threshold=%s "
+        "min_conf=%s shorts=%s cost=%s stop=%s take=%s pos=%s | "
+        "min_train=%s test_bars=%s expanding=%s embargo=%s model=%s",
+        ticker, period, holding_period, threshold_pct, min_confidence,
+        enable_shorts, transaction_cost_pct, stop_loss_pct, take_profit_pct,
+        max_position_pct, wf_min_train, wf_test_bars, wf_expanding,
+        holding_period, model_type,
+    )
+
     with st.spinner(f"Running walk-forward ({wf_test_bars}-bar folds)…"):
         wf_folds, wf_summary = walk_forward_backtest(
             df_features, make_train_fn(holding_period, threshold_pct, wf_model_cfg),
@@ -423,6 +440,12 @@ if run_wf:
             raw_df=result.get("raw"),
             pipeline_factory=lambda: create_pipeline(PIPELINE_CONFIG),
         )
+
+    logger.info(
+        "walk-forward result: folds=%s trades=%s oos_sharpe=%s oos_return=%s",
+        wf_summary.get("n_folds"), wf_summary.get("total_trades"),
+        wf_summary.get("oos_sharpe"), wf_summary.get("oos_total_return"),
+    )
 
     if "error" in wf_summary:
         st.error(f"Walk-forward error: {wf_summary['error']}")
