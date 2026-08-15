@@ -19,12 +19,12 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 
 | | In-sample | Walk-forward (OOS) | Buy & hold |
 |---|---:|---:|---:|
-| Total return | 18.8% | **-0.2%** | **265.9%** |
-| Sharpe | 1.01 | **0.00** | 0.87 |
-| Trades | 63 | 61 | 1 |
+| Total return | 18.2% | **-2.0%** | **265.9%** |
+| Sharpe | 1.05 | **-0.10** | 0.87 |
+| Trades | 67 | 70 | 1 |
 
-Bootstrap Sharpe 95% CI on OOS daily returns: **[-0.67, 0.72]**
-t-test on mean daily return: **t = 0.01, p = 0.99**
+Stationary-bootstrap Sharpe 95% CI on OOS daily returns: **[-0.61, 0.72]**
+t-test on mean daily return: **t = -0.30, p = 0.76**
 
 ### There is no statistically detectable edge
 
@@ -34,11 +34,20 @@ and it is reported rather than buried.
 
 Three things are worth drawing out.
 
-**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.01
-in-sample against 0.00 out-of-sample is what fitting a model on the rows you
+**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.05
+in-sample against -0.10 out-of-sample is what fitting a model on the rows you
 then score it on buys you. The dashboard still displays the in-sample panel,
 explicitly labelled as such, because that gap is the most useful thing the
 project has to teach.
+
+**The confidence interval is built to respect autocorrelation.** Daily returns
+cluster in volatility, so resampling them independently understates the spread
+and can manufacture significance. `bootstrap_sharpe_ci` uses a Politis-Romano
+stationary bootstrap with geometric blocks averaging `n^(1/3)` days. On an
+AR(1) series the two disagree about the answer, not just the width: the IID
+interval excludes zero where the stationary one includes it. Pass
+`method="iid"` to see the difference.
+
 
 **Small samples will lie to you.** On 2 years of data (4 folds, 17 trades) the
 OOS Sharpe came out at 0.93 — and it *rose* when leakage was removed, which is
@@ -57,7 +66,10 @@ backtest originally read the signal at bar *i* and filled at that same bar's
 close — observing a price and then trading at it. Adding a one-bar execution
 lag (`BacktestConfig.execution_lag_bars`, decide at today's close, fill at
 tomorrow's) moved OOS return from +1.2% to **-0.2%** and Sharpe from 0.07 to
-**0.00**. Set it to 0 to reproduce the optimistic version.
+**0.00**. Evaluating stops against each bar's high and low rather than its
+close (`intrabar_stops`) took it further, to **-2.0%** and **-0.10** — a
+whipsaw that dips through the stop and recovers by the bell is a real loss the
+close never sees. Set it to 0 to reproduce the optimistic version.
 
 The February–March 2020 fold is the worst single window: -3.9% across 15
 trades as the model traded actively into the COVID drawdown. Regime-conditional
@@ -70,19 +82,25 @@ much. It does:
 
 | Min train bars | Test bars | Folds | Trades | OOS Sharpe | p |
 |---:|---:|---:|---:|---:|---:|
-| 250 | 60 | 37 | 66 | **+0.09** | 0.78 |
-| 252 | 63 | 35 | 66 | -0.12 | 0.72 |
-| 252 | 60 | 37 | 78 | **-0.44** | 0.20 |
-| 250 | 63 | 35 | 58 | -0.22 | 0.52 |
-| 252 | 126 | 17 | 100 | +0.08 | 0.82 |
-| 300 | 63 | 35 | 82 | +0.03 | 0.94 |
+| 300 | 63 | 35 | 89 | **-0.00** | 0.99 |
+| 252 | 126 | 17 | 107 | -0.05 | 0.88 |
+| 250 | 60 | 37 | 67 | -0.12 | 0.73 |
+| 252 | 63 | 35 | 77 | -0.22 | 0.52 |
+| 250 | 63 | 35 | 72 | -0.30 | 0.38 |
+| 252 | 60 | 37 | 85 | **-0.41** | 0.22 |
 
-**Moving the minimum training window by two bars swings the OOS Sharpe from
-+0.09 to -0.44.** Nothing about the strategy changed. If a result flips sign
-on a choice that arbitrary, the result is the arbitrary choice, not the
-strategy — and the honest reading of every row is the same one: zero, with
-none of them significant.
+Moving the minimum training window by two bars — 250 to 252, holding test
+bars at 60 — moves the OOS Sharpe from -0.12 to -0.41. Nothing about the
+strategy changed. The six configurations span 0.4 of Sharpe purely on where
+the folds happen to land.
 
+Every one of them is negative, and not one is significant. That is the useful
+reading: the spread is noise around zero, and any single number drawn from it
+would be a number about the fold boundaries rather than about the strategy.
+
+```bash
+python scripts/fold_stability.py SPY 10y
+```
 
 ### How many configurations were tried?
 
@@ -93,15 +111,16 @@ walk-forward with embargo and per-fold preprocessing:
 
 | | |
 |---|---|
-| OOS Sharpe across 18 configurations | min **-0.31** · median **0.05** · max **0.46** |
+| OOS Sharpe across 18 configurations | min **-0.41** · median **-0.06** · max **0.33** |
 | Significant at p < 0.05 | **0 of 18** |
 | Expected false positives at p < 0.05 | ~0.9 |
 
 The best cell — 10-day holding, 0.25% threshold, 0.55 confidence — returns
-15.2% with Sharpe 0.46. Reported alone that would look like a finding. Its
-p-value is 0.18, it is one of eighteen attempts, and it still loses to buy and
-hold by 250 points. Searching a grid this size would be expected to throw up
-about one spuriously significant result; it produced none.
+10.3% with Sharpe 0.33. Reported alone that would look like a finding. Its
+p-value is 0.34, it is one of eighteen attempts, and it still loses to buy and
+hold by 255 points. Searching a grid this size would be expected to throw up
+about one spuriously significant result; it produced none. The median
+configuration is negative.
 
 ```bash
 python scripts/sensitivity.py SPY 10y     # writes docs/sensitivity_spy_10y.csv

@@ -39,6 +39,14 @@ class BacktestConfig:
     min_confidence: float = 0.55        # ML probability threshold for entry
     enable_shorts: bool = False
 
+    # Evaluate stop-loss and take-profit against the bar's high and low
+    # rather than its close. Checking the close only means an intraday
+    # excursion straight through the stop that recovers by the bell never
+    # triggers, which understates whipsaw losses. Requires High/Low columns;
+    # falls back to close-only when they are absent. Set False to reproduce
+    # the earlier close-only behaviour.
+    intrabar_stops: bool = True
+
     # Bars between generating a signal and filling on it. Features at bar i
     # include bar i's close, so a fill at that same close is not achievable —
     # you would be trading on a price you have only just observed. 1 bar means
@@ -152,6 +160,17 @@ def run_backtest(
 
     # ---------- Extract numpy arrays (eliminates per-bar pandas overhead) ----------
     prices: np.ndarray = bt["Close"].to_numpy(dtype=np.float64)
+
+    # Intrabar exits need the bar's range. Synthetic frames often carry Close
+    # only, so this degrades to close-only rather than failing.
+    has_range = config.intrabar_stops and {"High", "Low"}.issubset(bt.columns)
+    highs = bt["High"].to_numpy(dtype=np.float64) if has_range else prices
+    lows = bt["Low"].to_numpy(dtype=np.float64) if has_range else prices
+    opens = (
+        bt["Open"].to_numpy(dtype=np.float64)
+        if has_range and "Open" in bt.columns
+        else prices
+    )
     signals: np.ndarray = bt["_signal"].to_numpy(dtype=np.int8)
     dates: np.ndarray = bt["Date"].to_numpy()
 
@@ -187,19 +206,42 @@ def run_backtest(
             days_held = i - entry_idx
             unrealized_pct = (price - entry_price) / entry_price * position
 
+            stop_price = entry_price * (1 - config.stop_loss_pct * position)
+            target_price = entry_price * (1 + config.take_profit_pct * position)
+
+            if position == 1:
+                stop_hit = lows[i] <= stop_price
+                target_hit = highs[i] >= target_price
+            else:
+                stop_hit = highs[i] >= stop_price
+                target_hit = lows[i] <= target_price
+
             exit_reason = None
-            if unrealized_pct <= -config.stop_loss_pct:
+            exit_price = price
+            if stop_hit:
+                # When a bar breaches both levels, OHLC cannot say which came
+                # first. Assume the stop did — the unfavourable ordering.
                 exit_reason = "Stop Loss"
-            elif unrealized_pct >= config.take_profit_pct:
+                # A gap through the stop fills at the open, not at the level.
+                exit_price = (
+                    min(opens[i], stop_price) if position == 1
+                    else max(opens[i], stop_price)
+                )
+            elif target_hit:
                 exit_reason = "Take Profit"
+                exit_price = (
+                    max(opens[i], target_price) if position == 1
+                    else min(opens[i], target_price)
+                )
             elif days_held >= config.max_holding_days:
                 exit_reason = "Max Holding"
             elif signal != 0 and signal != position:
                 exit_reason = "Signal Reversal"
 
             if exit_reason:
-                gross_pnl = shares * (price - entry_price) * position
-                transaction_fee = shares * price * config.transaction_cost_pct
+                unrealized_pct = (exit_price - entry_price) / entry_price * position
+                gross_pnl = shares * (exit_price - entry_price) * position
+                transaction_fee = shares * exit_price * config.transaction_cost_pct
                 net_pnl = gross_pnl - transaction_fee
                 cash += shares * entry_price * position + net_pnl
 
@@ -207,7 +249,7 @@ def run_backtest(
                     entry_date=entry_date,
                     exit_date=date,
                     entry_price=entry_price,
-                    exit_price=price,
+                    exit_price=exit_price,
                     position="LONG" if position == 1 else "SHORT",
                     shares=shares,
                     pnl=net_pnl,
