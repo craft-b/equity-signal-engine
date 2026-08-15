@@ -61,6 +61,53 @@ The February–March 2020 fold is the worst single window: -3.9% across 15
 trades as the model traded actively into the COVID drawdown. Regime-conditional
 performance is broken out in the dashboard.
 
+### The estimate is unstable to arbitrary choices
+
+Where the fold boundaries fall is a free parameter, and it should not matter
+much. It does:
+
+| Min train bars | Test bars | Folds | Trades | OOS Sharpe | p |
+|---:|---:|---:|---:|---:|---:|
+| 250 | 60 | 37 | 66 | **+0.09** | 0.78 |
+| 252 | 63 | 35 | 66 | -0.12 | 0.72 |
+| 252 | 60 | 37 | 78 | **-0.44** | 0.20 |
+| 250 | 63 | 35 | 58 | -0.22 | 0.52 |
+| 252 | 126 | 17 | 100 | +0.08 | 0.82 |
+| 300 | 63 | 35 | 82 | +0.03 | 0.94 |
+
+**Moving the minimum training window by two bars swings the OOS Sharpe from
++0.09 to -0.44.** Nothing about the strategy changed. If a result flips sign
+on a choice that arbitrary, the result is the arbitrary choice, not the
+strategy — and the honest reading of every row is the same one: zero, with
+none of them significant.
+
+
+### How many configurations were tried?
+
+The fair question about any single reported backtest. Rather than answer from
+memory, the whole grid is published — 18 combinations of holding period,
+signal threshold and minimum model confidence, each run through the full
+walk-forward with embargo and per-fold preprocessing:
+
+| | |
+|---|---|
+| OOS Sharpe across 18 configurations | min **-0.31** · median **0.05** · max **0.46** |
+| Significant at p < 0.05 | **0 of 18** |
+| Expected false positives at p < 0.05 | ~0.9 |
+
+The best cell — 10-day holding, 0.25% threshold, 0.55 confidence — returns
+15.2% with Sharpe 0.46. Reported alone that would look like a finding. Its
+p-value is 0.18, it is one of eighteen attempts, and it still loses to buy and
+hold by 250 points. Searching a grid this size would be expected to throw up
+about one spuriously significant result; it produced none.
+
+```bash
+python scripts/sensitivity.py SPY 10y     # writes docs/sensitivity_spy_10y.csv
+```
+
+Full grid: [`docs/sensitivity_spy_10y.csv`](docs/sensitivity_spy_10y.csv).
+
+
 ### Reproducing it
 
 ```bash

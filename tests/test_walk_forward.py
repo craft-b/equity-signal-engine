@@ -11,7 +11,6 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from backtest import BacktestConfig
 from walk_forward import FoldResult, WalkForwardConfig, walk_forward_backtest

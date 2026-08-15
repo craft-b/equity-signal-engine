@@ -14,8 +14,7 @@ to see the printed timing results.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -38,7 +37,14 @@ def _run_legacy_backtest(
     vectorized (numpy-array) rewrite.
     """
     bt = df.copy().reset_index(drop=True)
-    bt["_signal"] = _generate_signals(bt, None, None, config)
+    # Mirror run_backtest's execution lag so these tests keep comparing the
+    # loop implementations rather than the fill timing.
+    bt["_signal"] = (
+        _generate_signals(bt, None, None, config)
+        .shift(config.execution_lag_bars)
+        .fillna(0)
+        .astype(int)
+    )
 
     cash = config.initial_capital
     position = 0

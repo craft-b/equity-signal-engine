@@ -26,10 +26,10 @@ sys.path.insert(0, str(ROOT / "stock_dashboard"))
 
 import logging  # noqa: E402
 
-from backtest import BacktestConfig, run_backtest  # noqa: E402
+from backtest import BacktestConfig  # noqa: E402
 from data_pipeline import PipelineConfig, create_pipeline, process_stock_data  # noqa: E402
 from models import ModelConfig, train_model  # noqa: E402
-from stats import bootstrap_sharpe_ci, ttest_mean_return  # noqa: E402
+from stats import ttest_mean_return  # noqa: E402
 from walk_forward import WalkForwardConfig, walk_forward_backtest  # noqa: E402
 
 logging.getLogger("walk_forward").setLevel(logging.ERROR)

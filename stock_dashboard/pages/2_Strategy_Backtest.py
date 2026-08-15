@@ -47,8 +47,21 @@ st.caption("Event-driven backtest with position sizing, stop-loss/take-profit, a
 st.sidebar.header("Configuration")
 
 ticker = st.sidebar.selectbox("Asset", ["SPY", "QQQ", "IWM", "AAPL", "MSFT"], index=0)
-period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
-period = period_map[st.sidebar.selectbox("Period", list(period_map.keys()), index=1)]
+# Longer windows matter here: the README's finding is that a 2-year sample
+# produces an OOS Sharpe that looks meaningful and does not survive a 10-year
+# one. A visitor should be able to reproduce that in the UI.
+period_map = {
+    "6 Months": "6mo", "1 Year": "1y", "2 Years": "2y",
+    "5 Years": "5y", "10 Years": "10y",
+}
+period_label = st.sidebar.selectbox("Period", list(period_map.keys()), index=1)
+period = period_map[period_label]
+if period_label in ("5 Years", "10 Years"):
+    st.sidebar.caption(
+        "Walk-forward over this window trains a model per fold and takes "
+        "several minutes. It is also the only sample large enough to say "
+        "anything — see the Results section of the README."
+    )
 
 st.sidebar.subheader("Strategy")
 holding_period = st.sidebar.slider("Max Holding (days)", 1, 20, 5)
@@ -368,6 +381,10 @@ if run_wf:
         min_train_bars=wf_min_train,
         test_bars=wf_test_bars,
         expanding=wf_expanding,
+        # The embargo must track the label horizon, not sit at its default.
+        # With a 10-day holding period a 5-bar embargo still leaks five days
+        # of test-window prices into the last training labels.
+        embargo_bars=holding_period,
     )
     wf_bt_config = BacktestConfig(
         max_position_pct=max_position_pct,
@@ -378,7 +395,13 @@ if run_wf:
         min_confidence=min_confidence,
         enable_shorts=enable_shorts,
     )
-    wf_model_cfg = ModelConfig(model_type=model_type, calibrate=True) if model_type != "Technical Only" else None
+    # label_horizon feeds TimeSeriesSplit(gap=...) — same reason as the
+    # embargo above: it has to follow the holding period.
+    wf_model_cfg = (
+        ModelConfig(model_type=model_type, calibrate=True,
+                    label_horizon=holding_period)
+        if model_type != "Technical Only" else None
+    )
 
     def make_train_fn(hp: int, tp: float, mcfg):
         def _train(df_fold: pd.DataFrame):
@@ -397,7 +420,7 @@ if run_wf:
             wf_bt_config, wf_config,
             # Refit scaler, outlier bounds and feature selection inside each
             # fold so no test-period statistic shapes the training features.
-            raw_df=data.get("raw"),
+            raw_df=result.get("raw"),
             pipeline_factory=lambda: create_pipeline(PIPELINE_CONFIG),
         )
 

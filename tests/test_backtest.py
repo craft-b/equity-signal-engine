@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backtest import BacktestConfig, Trade, _generate_signals, run_backtest
+from backtest import BacktestConfig, _generate_signals, run_backtest
 
 
 # ---------------------------------------------------------------------------
