@@ -7,7 +7,6 @@ Covers bootstrap_sharpe_ci and ttest_mean_return.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from stats import bootstrap_sharpe_ci, ttest_mean_return
 

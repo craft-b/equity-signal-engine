@@ -59,7 +59,7 @@ def raw_ohlcv_no_ticker(raw_ohlcv: pd.DataFrame) -> pd.DataFrame:
 @pytest.fixture
 def processed_df(raw_ohlcv: pd.DataFrame) -> pd.DataFrame:
     """DataFrame after running through the full data pipeline."""
-    from data_pipeline import PipelineConfig, process_stock_data
+    from data_pipeline import PipelineConfig
 
     # We can't easily mock yfinance here — instead build a minimal processed
     # DataFrame manually using the pipeline transformers directly.
@@ -68,7 +68,6 @@ def processed_df(raw_ohlcv: pd.DataFrame) -> pd.DataFrame:
         FinalNaNHandler,
         MissingDataHandler,
         TechnicalIndicators,
-        PipelineConfig,
     )
 
     config = PipelineConfig(

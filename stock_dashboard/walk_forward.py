@@ -43,6 +43,16 @@ class WalkForwardConfig:
     expanding: bool = True      # True = expanding window; False = fixed rolling window
     rolling_train_bars: int = 504  # Only used when expanding=False
 
+    # Embargo: drop this many bars from the end of each training window.
+    #
+    # The label at row i is the forward return over `horizon` bars, so it is
+    # computed from Close[i + horizon]. Without a gap, the final `horizon`
+    # training labels are derived from prices that fall inside the test
+    # window — the model is fitted on the answer it is about to be graded on.
+    # Set this to the label horizon. See Lopez de Prado, "Advances in
+    # Financial Machine Learning", ch. 7 (purging and embargo).
+    embargo_bars: int = 5
+
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -63,6 +73,53 @@ class FoldResult:
 
 
 # ---------------------------------------------------------------------------
+# Per-fold preprocessing
+# ---------------------------------------------------------------------------
+
+def _fold_slices_refit(
+    raw_df: pd.DataFrame,
+    train_start_i: int,
+    train_end_i: int,
+    test_start_i: int,
+    test_end_i: int,
+    pipeline_factory: Callable[[], object],
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    """Build one fold's train and test frames without leaking test statistics.
+
+    Fits a fresh pipeline on the training rows, then transforms the contiguous
+    train-through-test span so the rolling indicators keep their trailing
+    history. Returns ``(None, None)`` if the fold cannot be built.
+    """
+    try:
+        pipe = pipeline_factory()
+        train_raw = raw_df.iloc[train_start_i:train_end_i]
+        span_raw = raw_df.iloc[train_start_i:test_end_i]
+
+        pipe.fit(train_raw)
+        span = pipe.transform(span_raw)
+
+        if len(span) != len(span_raw):
+            logger.warning(
+                "Per-fold preprocessing changed row count (%d -> %d); "
+                "falling back to positional split may misalign",
+                len(span_raw), len(span),
+            )
+            return None, None
+
+        span = span.reset_index(drop=True)
+        train_len = train_end_i - train_start_i
+        test_offset = test_start_i - train_start_i
+
+        return (
+            span.iloc[:train_len].reset_index(drop=True),
+            span.iloc[test_offset:].reset_index(drop=True),
+        )
+    except Exception as exc:  # noqa: BLE001 - one bad fold must not kill the run
+        logger.warning("Per-fold preprocessing error: %s", exc)
+        return None, None
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -71,9 +128,11 @@ def walk_forward_backtest(
     train_fn: Callable[[pd.DataFrame], Tuple],
     bt_config: BacktestConfig,
     wf_config: Optional[WalkForwardConfig] = None,
+    raw_df: Optional[pd.DataFrame] = None,
+    pipeline_factory: Optional[Callable[[], object]] = None,
 ) -> Tuple[List[FoldResult], Dict]:
     """
-    Run walk-forward backtesting on a processed DataFrame.
+    Run walk-forward backtesting.
 
     Args:
         df:        Processed DataFrame with Close, Date, and feature columns.
@@ -84,6 +143,24 @@ def walk_forward_backtest(
                    Return (None, None) to fall back to technical-only signals.
         bt_config: BacktestConfig for the per-fold simulation.
         wf_config: WalkForwardConfig controlling fold sizes and window type.
+        raw_df:    Optional unprocessed DataFrame, row-aligned with ``df``.
+                   Supply together with ``pipeline_factory`` to refit
+                   preprocessing inside each fold.
+        pipeline_factory: Optional callable returning a fresh, unfitted
+                   preprocessing Pipeline.
+
+    Preprocessing and leakage:
+        The scaler, outlier bounds and correlation-based feature selection all
+        learn parameters from the data they are fitted on. Fitting them once
+        on the whole series — as ``process_stock_data`` does — lets test-period
+        statistics inform how training features are built.
+
+        When ``raw_df`` and ``pipeline_factory`` are given, each fold instead
+        fits the pipeline on its training rows only, then transforms the
+        contiguous train+test span with that fitted pipeline. Transforming the
+        contiguous span matters: the rolling indicators need trailing history,
+        so the test window must not be transformed in isolation. The learned
+        parameters still come from training rows alone.
 
     Returns:
         folds:   List[FoldResult], one entry per OOS test window.
@@ -111,8 +188,30 @@ def walk_forward_backtest(
         else:
             train_start_i = max(0, test_start_i - wf_config.rolling_train_bars)
 
-        df_train = df.iloc[train_start_i:test_start_i].reset_index(drop=True)
-        df_test = df.iloc[test_start_i:test_end_i].reset_index(drop=True)
+        # Embargo: hold back the last `embargo_bars` of the training window so
+        # no training label is computed from a price inside the test window.
+        train_end_i = max(train_start_i, test_start_i - wf_config.embargo_bars)
+
+        refit = raw_df is not None and pipeline_factory is not None
+        if refit:
+            df_train, df_test = _fold_slices_refit(
+                raw_df, train_start_i, train_end_i, test_start_i, test_end_i,
+                pipeline_factory,
+            )
+            if df_train is None:
+                logger.warning("Fold %d: per-fold preprocessing failed — skipping",
+                               fold_idx)
+                continue
+        else:
+            df_train = df.iloc[train_start_i:train_end_i].reset_index(drop=True)
+            df_test = df.iloc[test_start_i:test_end_i].reset_index(drop=True)
+
+        if len(df_train) < 30:
+            logger.debug(
+                "Fold %d: train window only %d bars after embargo — skipping",
+                fold_idx, len(df_train),
+            )
+            continue
 
         if len(df_test) < 10:
             logger.debug("Fold %d: test window only %d bars — skipping", fold_idx, len(df_test))

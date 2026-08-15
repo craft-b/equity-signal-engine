@@ -5,8 +5,6 @@ Tests for stock_dashboard/models.py
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
-import pytest
 
 from models import (
     ModelConfig,

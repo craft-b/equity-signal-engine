@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backtest import BacktestConfig, Trade, _generate_signals, run_backtest
+from backtest import BacktestConfig, _generate_signals, run_backtest
 
 
 # ---------------------------------------------------------------------------
@@ -355,3 +355,147 @@ class TestMetrics:
         df.loc[30:35, "Close"] = np.nan  # inject NaN mid-series
         _, metrics, _ = run_backtest(df)
         assert "error" in metrics
+
+
+# ---------------------------------------------------------------------------
+# Execution lag (E5): signals must not fill on the bar that produced them
+# ---------------------------------------------------------------------------
+
+class TestExecutionLag:
+    """Features at bar i include Close[i], so a fill at Close[i] is look-ahead."""
+
+    @staticmethod
+    def _ramp(n: int = 120) -> pd.DataFrame:
+        """Flat prices with one sharp step, so the entry bar is unambiguous."""
+        close = np.full(n, 100.0)
+        close[60:] = 130.0
+        return pd.DataFrame({
+            "Date": pd.date_range("2022-01-03", periods=n, freq="B"),
+            "Close": close,
+            "Open": close,
+            "High": close,
+            "Low": close,
+            "Volume": np.full(n, 1_000_000.0),
+        })
+
+    def test_default_config_lags_execution_by_one_bar(self):
+        assert BacktestConfig().execution_lag_bars == 1
+
+    def test_entry_is_one_bar_after_the_signal(self, monkeypatch):
+        import backtest as bt_mod
+
+        df = self._ramp()
+        signal_bar = 70
+
+        def fake_signals(frame, model, feature_cols, config):
+            sig = pd.Series(0, index=frame.index)
+            sig.iloc[signal_bar] = 1
+            return sig
+
+        monkeypatch.setattr(bt_mod, "_generate_signals", fake_signals)
+
+        lagged, _, _ = bt_mod.run_backtest(df, None, None, BacktestConfig())
+        immediate, _, _ = bt_mod.run_backtest(
+            df, None, None, BacktestConfig(execution_lag_bars=0)
+        )
+
+        assert not lagged.empty and not immediate.empty
+        lag_entry = pd.Timestamp(lagged.iloc[0]["entry_date"])
+        now_entry = pd.Timestamp(immediate.iloc[0]["entry_date"])
+
+        assert now_entry == df["Date"].iloc[signal_bar]
+        assert lag_entry == df["Date"].iloc[signal_bar + 1]
+
+    def test_zero_lag_reproduces_previous_behaviour(self):
+        """The optimistic path stays reachable so the change is measurable."""
+        assert BacktestConfig(execution_lag_bars=0).execution_lag_bars == 0
+
+
+# ---------------------------------------------------------------------------
+# Intrabar exits (E7): stops must see the bar's range, not just its close
+# ---------------------------------------------------------------------------
+
+class TestIntrabarStops:
+    """Checking the close alone lets a whipsaw through the stop go unrecorded."""
+
+    @staticmethod
+    def _bars(n: int = 80) -> pd.DataFrame:
+        # run_backtest rejects frames under 50 rows.
+        close = np.full(n, 100.0)
+        return pd.DataFrame({
+            "Date": pd.date_range("2022-01-03", periods=n, freq="B"),
+            "Open": close.copy(),
+            "High": close.copy(),
+            "Low": close.copy(),
+            "Close": close.copy(),
+            "Volume": np.full(n, 1_000_000.0),
+        })
+
+    def _run(self, df, config, signal_bar=5):
+        import backtest as bt_mod
+
+        def fake_signals(frame, model, feature_cols, cfg):
+            sig = pd.Series(0, index=frame.index)
+            sig.iloc[signal_bar] = 1
+            return sig
+
+        original = bt_mod._generate_signals
+        bt_mod._generate_signals = fake_signals
+        try:
+            return bt_mod.run_backtest(df, None, None, config)
+        finally:
+            bt_mod._generate_signals = original
+
+    def test_default_enables_intrabar_stops(self):
+        assert BacktestConfig().intrabar_stops is True
+
+    def test_whipsaw_through_the_stop_is_caught(self):
+        """Low breaches the stop; the close recovers. Close-only misses it."""
+        df = self._bars()
+        df.loc[10, "Low"] = 95.0        # -5%, through a 3% stop
+        df.loc[10, "Close"] = 99.5      # recovers by the bell
+
+        config = BacktestConfig(stop_loss_pct=0.03, take_profit_pct=0.50,
+                                max_holding_days=30)
+        intrabar, _, _ = self._run(df, config)
+        close_only, _, _ = self._run(
+            df, BacktestConfig(stop_loss_pct=0.03, take_profit_pct=0.50,
+                               max_holding_days=30, intrabar_stops=False)
+        )
+
+        assert intrabar.iloc[0]["exit_reason"] == "Stop Loss"
+        assert close_only.iloc[0]["exit_reason"] != "Stop Loss"
+
+    def test_stop_fills_at_the_level_not_the_close(self):
+        df = self._bars()
+        df.loc[10, "Low"] = 95.0
+        df.loc[10, "Close"] = 99.5
+        config = BacktestConfig(stop_loss_pct=0.03, take_profit_pct=0.50,
+                                max_holding_days=30)
+        trades, _, _ = self._run(df, config)
+        assert trades.iloc[0]["exit_price"] == pytest.approx(97.0)
+
+    def test_gap_through_the_stop_fills_at_the_open(self):
+        """A bar that opens below the stop cannot fill at the stop price."""
+        df = self._bars()
+        df.loc[10, ["Open", "High", "Low", "Close"]] = [92.0, 93.0, 91.0, 92.5]
+        config = BacktestConfig(stop_loss_pct=0.03, take_profit_pct=0.50,
+                                max_holding_days=30)
+        trades, _, _ = self._run(df, config)
+        assert trades.iloc[0]["exit_price"] == pytest.approx(92.0)
+        assert trades.iloc[0]["pnl"] < 0
+
+    def test_stop_wins_when_a_bar_breaches_both_levels(self):
+        """OHLC cannot order the two touches, so assume the adverse one."""
+        df = self._bars()
+        df.loc[10, ["Open", "High", "Low", "Close"]] = [100.0, 110.0, 95.0, 105.0]
+        config = BacktestConfig(stop_loss_pct=0.03, take_profit_pct=0.05,
+                                max_holding_days=30)
+        trades, _, _ = self._run(df, config)
+        assert trades.iloc[0]["exit_reason"] == "Stop Loss"
+
+    def test_falls_back_to_close_only_without_high_low(self):
+        df = self._bars().drop(columns=["High", "Low"])
+        config = BacktestConfig(stop_loss_pct=0.03, max_holding_days=30)
+        trades, metrics, _ = self._run(df, config)
+        assert "error" not in metrics

@@ -11,6 +11,8 @@ Runs the event-driven backtest engine and displays:
 
 from __future__ import annotations
 
+import logging
+
 import sys
 from pathlib import Path
 
@@ -21,7 +23,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backtest import BacktestConfig, run_backtest
-from data_pipeline import PipelineConfig, process_stock_data
+from data_pipeline import PipelineConfig, create_pipeline, process_stock_data
 from models import ModelConfig, TrainResult, train_model
 from regimes import classify_vol_regimes, regime_performance
 from stats import bootstrap_sharpe_ci, ttest_mean_return
@@ -37,6 +39,8 @@ from utils import (
 from walk_forward import WalkForwardConfig, walk_forward_backtest
 
 st.set_page_config(page_title="Strategy Backtest", layout="wide")
+
+logger = logging.getLogger(__name__)
 st.title("Strategy Backtest")
 st.caption("Event-driven backtest with position sizing, stop-loss/take-profit, and transaction costs")
 
@@ -47,8 +51,21 @@ st.caption("Event-driven backtest with position sizing, stop-loss/take-profit, a
 st.sidebar.header("Configuration")
 
 ticker = st.sidebar.selectbox("Asset", ["SPY", "QQQ", "IWM", "AAPL", "MSFT"], index=0)
-period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
-period = period_map[st.sidebar.selectbox("Period", list(period_map.keys()), index=1)]
+# Longer windows matter here: the README's finding is that a 2-year sample
+# produces an OOS Sharpe that looks meaningful and does not survive a 10-year
+# one. A visitor should be able to reproduce that in the UI.
+period_map = {
+    "6 Months": "6mo", "1 Year": "1y", "2 Years": "2y",
+    "5 Years": "5y", "10 Years": "10y",
+}
+period_label = st.sidebar.selectbox("Period", list(period_map.keys()), index=1)
+period = period_map[period_label]
+if period_label in ("5 Years", "10 Years"):
+    st.sidebar.caption(
+        "Walk-forward over this window trains a model per fold and takes "
+        "several minutes. It is also the only sample large enough to say "
+        "anything — see the Results section of the README."
+    )
 
 st.sidebar.subheader("Strategy")
 holding_period = st.sidebar.slider("Max Holding (days)", 1, 20, 5)
@@ -73,8 +90,10 @@ with st.sidebar.expander("Advanced"):
 st.sidebar.subheader("Walk-Forward Validation")
 run_wf = st.sidebar.checkbox(
     "Run Walk-Forward",
-    value=False,
-    help="Retrain on each expanding window and test OOS — the honest performance estimate.",
+    value=True,
+    help="Retrain on each expanding window and test OOS — the honest performance "
+         "estimate. On by default: the in-sample panel below is not a "
+         "performance estimate and should not be read as one.",
 )
 if run_wf:
     with st.sidebar.expander("Walk-Forward Settings"):
@@ -90,15 +109,17 @@ if run_wf:
 # Helpers
 # ---------------------------------------------------------------------------
 
+PIPELINE_CONFIG = PipelineConfig(
+    sma_periods=[5, 10, 20, 50],
+    volatility_windows=[10, 20],
+    return_lags=[1, 2, 5],
+    min_periods=100,
+)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data(ticker: str, period: str) -> dict:
-    config = PipelineConfig(
-        sma_periods=[5, 10, 20, 50],
-        volatility_windows=[10, 20],
-        return_lags=[1, 2, 5],
-        min_periods=100,
-    )
-    return process_stock_data(ticker, period, config)
+    return process_stock_data(ticker, period, PIPELINE_CONFIG)
 
 
 def add_target(df: pd.DataFrame, holding_period: int, threshold_pct: float = 0.5) -> pd.DataFrame:
@@ -144,11 +165,22 @@ if model_type != "Technical Only":
         train_result = train_model(df, cfg)
 
     if train_result:
-        st.success(
-            f"Model trained — CV accuracy {train_result.cv.accuracy:.3f} · "
-            f"AUC-ROC {train_result.cv.auc_roc:.3f} · "
+        acc = train_result.cv.accuracy
+        auc = train_result.cv.auc_roc
+        note = (
+            f"Model trained — CV AUC-ROC {auc:.3f} · accuracy {acc:.3f} · "
             f"Brier {train_result.cv.brier:.3f}"
         )
+        # Accuracy near 0.5 on a binary target is a coin flip. Say so rather
+        # than rendering it in a green success box.
+        if acc < 0.55 or auc < 0.55:
+            st.warning(
+                note
+                + "\n\nThis is close to chance on a binary target. "
+                "Treat any downstream backtest as unsupported by the model."
+            )
+        else:
+            st.info(note)
     else:
         st.warning("Model training failed — using technical signals.")
 
@@ -175,7 +207,15 @@ if "error" in metrics:
 # Results
 # ---------------------------------------------------------------------------
 
-st.header("Performance Summary")
+st.header("In-Sample Fit — not a performance estimate")
+st.warning(
+    "**These numbers are in-sample.** The model was fitted on every row below "
+    "and then scored on those same rows, so they measure how well it memorised "
+    "this history — not how it would have performed. They are shown because "
+    "the gap between them and the walk-forward results is the point. For the "
+    "honest estimate, see **Walk-Forward Validation** below.",
+    icon=None,
+)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric(
@@ -345,6 +385,10 @@ if run_wf:
         min_train_bars=wf_min_train,
         test_bars=wf_test_bars,
         expanding=wf_expanding,
+        # The embargo must track the label horizon, not sit at its default.
+        # With a 10-day holding period a 5-bar embargo still leaks five days
+        # of test-window prices into the last training labels.
+        embargo_bars=holding_period,
     )
     wf_bt_config = BacktestConfig(
         max_position_pct=max_position_pct,
@@ -355,7 +399,13 @@ if run_wf:
         min_confidence=min_confidence,
         enable_shorts=enable_shorts,
     )
-    wf_model_cfg = ModelConfig(model_type=model_type, calibrate=True) if model_type != "Technical Only" else None
+    # label_horizon feeds TimeSeriesSplit(gap=...) — same reason as the
+    # embargo above: it has to follow the holding period.
+    wf_model_cfg = (
+        ModelConfig(model_type=model_type, calibrate=True,
+                    label_horizon=holding_period)
+        if model_type != "Technical Only" else None
+    )
 
     def make_train_fn(hp: int, tp: float, mcfg):
         def _train(df_fold: pd.DataFrame):
@@ -368,11 +418,34 @@ if run_wf:
             return result.model, result.feature_cols
         return _train
 
+    # Log the resolved configuration. Without this there is no way to tell,
+    # after the fact, what the UI actually ran — which made a UI/script
+    # discrepancy impossible to diagnose.
+    logger.info(
+        "walk-forward config: ticker=%s period=%s holding=%s threshold=%s "
+        "min_conf=%s shorts=%s cost=%s stop=%s take=%s pos=%s | "
+        "min_train=%s test_bars=%s expanding=%s embargo=%s model=%s",
+        ticker, period, holding_period, threshold_pct, min_confidence,
+        enable_shorts, transaction_cost_pct, stop_loss_pct, take_profit_pct,
+        max_position_pct, wf_min_train, wf_test_bars, wf_expanding,
+        holding_period, model_type,
+    )
+
     with st.spinner(f"Running walk-forward ({wf_test_bars}-bar folds)…"):
         wf_folds, wf_summary = walk_forward_backtest(
             df_features, make_train_fn(holding_period, threshold_pct, wf_model_cfg),
             wf_bt_config, wf_config,
+            # Refit scaler, outlier bounds and feature selection inside each
+            # fold so no test-period statistic shapes the training features.
+            raw_df=result.get("raw"),
+            pipeline_factory=lambda: create_pipeline(PIPELINE_CONFIG),
         )
+
+    logger.info(
+        "walk-forward result: folds=%s trades=%s oos_sharpe=%s oos_return=%s",
+        wf_summary.get("n_folds"), wf_summary.get("total_trades"),
+        wf_summary.get("oos_sharpe"), wf_summary.get("oos_total_return"),
+    )
 
     if "error" in wf_summary:
         st.error(f"Walk-forward error: {wf_summary['error']}")

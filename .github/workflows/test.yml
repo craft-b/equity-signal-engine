@@ -22,5 +22,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Lint
+        # The Streamlit pages are never imported by the test suite, so a
+        # NameError or a syntax error in one of them ships green. F821
+        # (undefined name) catches exactly that class of bug; both were
+        # introduced and missed during the OOS validation work.
+        run: |
+          pip install ruff
+          ruff check stock_dashboard/ api/ tests/ scripts/ --select F,E9
+
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short

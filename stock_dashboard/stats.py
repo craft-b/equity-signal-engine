@@ -12,11 +12,46 @@ import numpy as np
 from scipy import stats
 
 
+def _default_block_length(n: int) -> float:
+    """Mean block length for the stationary bootstrap.
+
+    n**(1/3) is the standard rule of thumb: long enough to carry the
+    short-horizon autocorrelation and volatility clustering in daily returns,
+    short enough that blocks stay numerous. For ~2,200 observations this gives
+    roughly 13 trading days.
+    """
+    return max(2.0, float(n ** (1.0 / 3.0)))
+
+
+def _stationary_indices(
+    rng: np.random.Generator, n: int, n_boot: int, mean_block: float
+) -> np.ndarray:
+    """Index matrix for the Politis-Romano stationary bootstrap.
+
+    Each resample walks forward through the series, and at every step restarts
+    at a fresh random position with probability 1/mean_block. Block lengths are
+    therefore geometric with the requested mean, and the resampled series is
+    stationary — unlike a fixed-block bootstrap, which distorts the ends.
+    """
+    restart_prob = 1.0 / mean_block
+    indices = np.empty((n_boot, n), dtype=np.int64)
+    indices[:, 0] = rng.integers(0, n, size=n_boot)
+
+    restarts = rng.random((n_boot, n - 1)) < restart_prob
+    fresh = rng.integers(0, n, size=(n_boot, n - 1))
+    for t in range(1, n):
+        carried = (indices[:, t - 1] + 1) % n
+        indices[:, t] = np.where(restarts[:, t - 1], fresh[:, t - 1], carried)
+    return indices
+
+
 def bootstrap_sharpe_ci(
     daily_returns: np.ndarray,
     n_boot: int = 1000,
     ci: float = 0.95,
     random_state: int = 42,
+    method: str = "stationary",
+    mean_block: float | None = None,
 ) -> tuple[float, float, np.ndarray]:
     """
     Bootstrap confidence interval for the annualised Sharpe ratio.
@@ -41,10 +76,19 @@ def bootstrap_sharpe_ci(
     n = len(returns)
     boot_sharpes = np.empty(n_boot)
 
-    for i in range(n_boot):
-        sample = rng.choice(returns, size=n, replace=True)
-        std = sample.std()
-        boot_sharpes[i] = sample.mean() / std * np.sqrt(252) if std > 0 else 0.0
+    if method == "stationary":
+        block = mean_block or _default_block_length(n)
+        indices = _stationary_indices(rng, n, n_boot, block)
+        samples = returns[indices]
+        stds = samples.std(axis=1)
+        means = samples.mean(axis=1)
+        boot_sharpes = np.where(stds > 0, means / np.where(stds > 0, stds, 1)
+                                * np.sqrt(252), 0.0)
+    else:
+        for i in range(n_boot):
+            sample = rng.choice(returns, size=n, replace=True)
+            std = sample.std()
+            boot_sharpes[i] = sample.mean() / std * np.sqrt(252) if std > 0 else 0.0
 
     alpha = (1.0 - ci) / 2.0
     lower = float(np.percentile(boot_sharpes, alpha * 100))

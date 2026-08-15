@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-import pytest
 from fastapi.testclient import TestClient
 
 # Ensure both stock_dashboard and api are importable
