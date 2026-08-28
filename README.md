@@ -12,6 +12,10 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 
 **[Live dashboard](https://equity-signal-engine-ajalyncnnkbsqpdfhkdtjd.streamlit.app)** | **[REST API](https://equity-signal-engine.onrender.com/docs)**
 
+> Both run on free tiers that sleep. The dashboard may show a "wake this app"
+> button and take a few minutes to rebuild; the API cold-starts in around 80
+> seconds. Neither is broken — it is idle.
+
 ## Results
 
 **SPY, 10 years (2016-08 to 2026-08), 37 walk-forward folds, 2,183 out-of-sample days.**
@@ -155,7 +159,7 @@ actually decays. The engineering here would support that; the features do not.
 git clone https://github.com/craft-b/equity-signal-engine.git
 cd equity-signal-engine
 pip install -r requirements.txt        # app only
-# pip install -r requirements-dev.txt  # includes jupyter + pytest
+# pip install -r requirements-dev.txt  # adds pytest, ruff, matplotlib
 streamlit run stock_dashboard/app.py
 ```
 
@@ -171,7 +175,10 @@ This project builds a supervised learning pipeline for short-term equity directi
 - Bootstrap Sharpe 95% CI (1 000 resamples) and t-test for mean return significance
 - Volatility regime detection (rolling percentile) with per-regime trade performance breakdown
 - Multi-page Streamlit dashboard for interactive strategy exploration
-- FastAPI REST service (`POST /predict`, `POST /drift`) deployed on Render with auto-generated `/docs`
+- FastAPI REST service (`POST /predict`, `POST /drift`) deployed on Render with auto-generated `/docs`.
+  `/predict` serves the SMA-10/50 crossover, not the classifier: the model is retrained per
+  walk-forward fold so there is no single fitted artefact to serve, and the research below
+  finds no out-of-sample edge that would justify serving one
 - Evidently AI feature drift detection with per-column KS-test results
 
 ## Project Structure
@@ -195,17 +202,16 @@ equity-signal-engine/
 │   ├── main.py                 # FastAPI service (predict + drift endpoints)
 │   └── schemas.py              # Pydantic request/response models
 ├── tests/
-│   ├── test_data_pipeline.py   # 28 tests
-│   ├── test_models.py          # 23 tests
-│   ├── test_backtest.py        # 31 tests
-│   ├── test_walk_forward.py    # 13 tests
-│   ├── test_stats.py           # 18 tests
-│   ├── test_regimes.py         # 21 tests
-│   ├── test_benchmark.py       # 5 tests (timing + equivalence)
-│   ├── test_monitoring.py      # 15 tests
-│   └── test_api.py             # 17 tests
-├── notebooks/
-│   └── jane_trading.ipynb      # Exploratory analysis
+│   ├── test_data_pipeline.py   # feature pipeline + transformers
+│   ├── test_models.py          # training, CV, calibration
+│   ├── test_backtest.py        # execution, stops, costs, lag
+│   ├── test_walk_forward.py    # folds, embargo, per-fold refit
+│   ├── test_stats.py           # bootstrap CI + significance
+│   ├── test_regimes.py         # volatility regime classification
+│   ├── test_benchmark.py       # timing + vectorised/naive equivalence
+│   ├── test_monitoring.py      # drift detection
+│   ├── test_pages_importable.py# Streamlit pages parse and import
+│   └── test_api.py             # REST endpoints
 ├── .github/workflows/
 │   └── test.yml                # CI: pytest on every push
 ├── requirements.txt
@@ -214,7 +220,7 @@ equity-signal-engine/
 
 ## Tests
 
-177 tests across the full pipeline, run automatically on every push:
+194 tests across the full pipeline, run automatically on every push:
 
 ```bash
 pytest tests/

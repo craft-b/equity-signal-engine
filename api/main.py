@@ -52,8 +52,13 @@ from regimes import classify_vol_regimes
 app = FastAPI(
     title="Equity Signal Engine API",
     description=(
-        "ML-powered trading signal generation and feature drift monitoring. "
-        "Signals are computed from SMA crossover with volatility regime context."
+        "Trading signal generation and feature drift monitoring over the same "
+        "feature pipeline the research code uses. Note what /predict is: an "
+        "SMA-10/50 crossover with volatility-regime context, not the trained "
+        "classifier. The model is deliberately not served here — it is retrained "
+        "per walk-forward fold, so there is no single fitted artefact to load, "
+        "and the research finds no out-of-sample edge worth serving. See the "
+        "README's Results section."
     ),
     version="1.0.0",
     docs_url="/docs",
