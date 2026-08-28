@@ -10,13 +10,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is what .python-version and render.yaml deploy; CI used to run
+        # only 3.12, so the tested interpreter was never the shipped one. 3.12
+        # stays in the matrix because it is what CI has been green on.
+        python-version: ["3.11", "3.12"]
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
 
       - name: Install dependencies
@@ -27,9 +35,7 @@ jobs:
         # NameError or a syntax error in one of them ships green. F821
         # (undefined name) catches exactly that class of bug; both were
         # introduced and missed during the OOS validation work.
-        run: |
-          pip install ruff
-          ruff check stock_dashboard/ api/ tests/ scripts/ --select F,E9
+        run: ruff check stock_dashboard/ api/ tests/ scripts/ --select F,E9
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short

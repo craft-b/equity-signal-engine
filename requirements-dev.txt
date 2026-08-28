@@ -1,5 +1,10 @@
 -r requirements.txt
-jupyter>=1.0,<2.0
-matplotlib>=3.7,<4.0
-seaborn>=0.13,<1.0
-pytest>=8.0,<10.0
+
+# matplotlib is used only by scripts/plot_results.py, which regenerates the
+# results figure from the sensitivity CSV.
+matplotlib==3.11.1
+
+pytest==9.1.1
+# Pinned so CI and a local run lint identically; CI previously installed ruff
+# unpinned, so a new release could change the result without a commit.
+ruff==0.16.5

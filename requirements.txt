@@ -1,11 +1,17 @@
-numpy>=1.26,<2.0
-pandas>=2.0,<3.0
-yfinance>=0.2.40,<0.3.0
-joblib>=1.3,<2.0
-scikit-learn>=1.4,<2.0
-scipy>=1.12,<2.0
-streamlit>=1.35,<2.0
-plotly>=5.20,<6.0
-fastapi>=0.110,<1.0
-uvicorn>=0.29,<1.0
-evidently>=0.4,<0.5
+# Exact pins. The README reports specific Sharpe, AUC and return figures, and a
+# floating numpy or scikit-learn can move them — a reproducibility claim needs a
+# reproducible environment. Resolved 2026-08-28; bump deliberately, not by drift.
+numpy==1.26.4
+pandas==2.3.3
+yfinance==0.2.66
+joblib==1.5.3
+scikit-learn==1.9.0
+scipy==1.17.1
+streamlit==1.62.0
+plotly==5.24.1
+fastapi==0.141.1
+uvicorn==0.52.4
+# evidently 0.5 reorganised the report/preset API that monitoring.py uses, so
+# this is held at 0.4.x deliberately. It is also far and away the heaviest
+# dependency here — a clean install is dominated by it.
+evidently==0.4.40
