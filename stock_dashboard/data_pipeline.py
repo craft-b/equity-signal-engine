@@ -87,6 +87,18 @@ class DataFetcher:
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
+#
+# Every fit() below sets `self.fitted_`. That trailing underscore is not
+# decoration: scikit-learn's check_is_fitted() decides an estimator is fitted by
+# looking for an attribute that ends in `_`, and from 1.6 onwards Pipeline runs
+# that check inside transform(). A transformer whose fit() only returned self
+# therefore passed on older scikit-learn and raised NotFittedError on newer
+# releases — which is exactly what happened here. Because requirements.txt
+# allowed `scikit-learn>=1.4,<2.0`, a fresh clone silently began resolving a
+# version where Pipeline.transform() raised, every walk-forward fold was caught
+# and skipped, and the scripts reported an empty grid while exiting 0.
+# See tests/test_data_pipeline.py::TestFittedState.
+
 
 class DataQualityChecker(BaseEstimator, TransformerMixin):
     """Drop duplicates, enforce minimum row count, sort by date."""
@@ -95,6 +107,7 @@ class DataQualityChecker(BaseEstimator, TransformerMixin):
         self.min_periods = min_periods
 
     def fit(self, X: pd.DataFrame, y=None) -> "DataQualityChecker":
+        self.fitted_ = True
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -126,6 +139,7 @@ class TechnicalIndicators(BaseEstimator, TransformerMixin):
         self.config = config or PipelineConfig()
 
     def fit(self, X: pd.DataFrame, y=None) -> "TechnicalIndicators":
+        self.fitted_ = True
         return self
 
     def _apply(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -213,6 +227,7 @@ class OutlierHandler(BaseEstimator, TransformerMixin):
                     mad = np.median(np.abs(vals - med))
                     if mad > 0:
                         self.bounds[col] = (med, mad)
+        self.fitted_ = True
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -243,6 +258,7 @@ class MissingDataHandler(BaseEstimator, TransformerMixin):
         self.drop_cols = [c for c in high_missing if c not in self._PROTECTED]
         if self.drop_cols:
             logger.info("Dropping %d high-missing columns: %s", len(self.drop_cols), self.drop_cols)
+        self.fitted_ = True
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -270,6 +286,7 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
 
         if len(feature_cols) <= 1:
             self.keep_cols = list(X.columns)
+            self.fitted_ = True
             return self
 
         corr = X[feature_cols].corr().abs()
@@ -282,6 +299,7 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         self.keep_cols = [c for c in X.columns if c not in to_drop]
         if to_drop:
             logger.info("Dropping %d correlated features", len(to_drop))
+        self.fitted_ = True
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -309,6 +327,7 @@ class DataScaler(BaseEstimator, TransformerMixin):
 
         if not self.cols_to_scale:
             logger.warning("No columns available to scale")
+            self.fitted_ = True
             return self
 
         if self.scale_by_group and "Ticker" in X.columns:
@@ -319,6 +338,7 @@ class DataScaler(BaseEstimator, TransformerMixin):
             self.scalers["global"] = RobustScaler().fit(X[self.cols_to_scale])
 
         logger.info("Scaling %d feature columns (prices excluded)", len(self.cols_to_scale))
+        self.fitted_ = True
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -343,6 +363,7 @@ class FinalNaNHandler(BaseEstimator, TransformerMixin):
     _PRICE_COLS = {"Close", "Open", "High", "Low"}
 
     def fit(self, X: pd.DataFrame, y=None) -> "FinalNaNHandler":
+        self.fitted_ = True
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:

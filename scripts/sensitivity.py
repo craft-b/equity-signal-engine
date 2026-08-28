@@ -126,6 +126,17 @@ def main(ticker: str = "SPY", period: str = "10y") -> int:
     sharpes = frame["sharpe"].dropna()
     significant = int((frame["p_value"] < 0.05).sum())
 
+    # An empty grid is a broken run, not a result. Every fold failing — a
+    # scikit-learn incompatibility in the pipeline, say — used to leave every
+    # cell NaN and still exit 0, so the CSV published as evidence could contain
+    # nothing at all while the command looked like it had succeeded.
+    if sharpes.empty:
+        print("-" * 60)
+        print(f"ERROR: all {len(frame)} configurations produced no tradeable "
+              f"folds. This is a failure, not a finding — check the "
+              f"walk_forward warnings (this script silences them below ERROR).")
+        return 1
+
     print("-" * 60)
     print(f"OOS Sharpe across {len(sharpes)} configurations: "
           f"min {sharpes.min():.2f} · median {sharpes.median():.2f} · "

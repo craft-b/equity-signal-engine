@@ -301,3 +301,43 @@ class TestCreatePipeline:
         pipe = create_pipeline(config)
         result = pipe.fit_transform(raw_ohlcv_no_ticker)
         assert not result.empty
+
+
+# ---------------------------------------------------------------------------
+# scikit-learn fitted-state contract
+# ---------------------------------------------------------------------------
+
+class TestFittedState:
+    """A fitted pipeline must be transformable on the installed scikit-learn.
+
+    These guard a silent, total failure. check_is_fitted() decides an estimator
+    is fitted by looking for an attribute ending in `_`, and Pipeline runs that
+    check inside transform() from scikit-learn 1.6. Transformers whose fit()
+    only returned self satisfied older releases and raised NotFittedError on
+    newer ones, so walk_forward caught the error per fold, skipped every fold,
+    and the scripts printed an empty grid and exited 0. Nothing in the suite
+    noticed, because nothing called fit() and transform() as separate steps.
+    """
+
+    def test_every_transformer_reports_fitted(self, raw_ohlcv):
+        transformers = [
+            DataQualityChecker(),
+            TechnicalIndicators(PipelineConfig()),
+            MissingDataHandler(),
+            OutlierHandler(),
+            FeatureSelector(),
+            DataScaler(),
+            FinalNaNHandler(),
+        ]
+        for t in transformers:
+            fitted = t.fit(raw_ohlcv)
+            assert any(
+                a.endswith("_") and not a.startswith("__") for a in vars(fitted)
+            ), f"{type(t).__name__}.fit() set no attribute ending in '_'"
+
+    def test_fit_then_transform_as_separate_calls(self, raw_ohlcv):
+        """The exact call shape walk_forward uses: fit on train, transform a span."""
+        pipe = create_pipeline(PipelineConfig(min_periods=10))
+        pipe.fit(raw_ohlcv)
+        out = pipe.transform(raw_ohlcv)
+        assert len(out) > 0

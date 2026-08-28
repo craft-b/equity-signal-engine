@@ -100,6 +100,14 @@ def main(ticker: str = "SPY", period: str = "2y") -> int:
         print(f"walk-forward produced no folds: {summary.get('error')}")
         return 1
 
+    # Folds are skipped individually on a preprocessing error, so a partial run
+    # is possible without an outright failure. Say so rather than quietly
+    # reporting statistics computed from fewer windows than were requested.
+    expected = len(range(250, len(processed) - 60 + 1, 60))
+    if len(folds) < expected:
+        print(f"WARNING: {expected - len(folds)} of {expected} folds were "
+              f"skipped; the numbers below cover {len(folds)} folds only.")
+
     oos_returns = np.concatenate([
         pd.Series(f.portfolio_history).pct_change().dropna().to_numpy()
         for f in folds
