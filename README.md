@@ -115,22 +115,28 @@ walk-forward with embargo and per-fold preprocessing:
 
 | | |
 |---|---|
-| OOS Sharpe across 18 configurations | min **-0.41** · median **-0.06** · max **0.33** |
+| OOS Sharpe across 18 configurations | min **-0.41** · median **-0.01** · max **0.37** |
 | Significant at p < 0.05 | **0 of 18** |
 | Expected false positives at p < 0.05 | ~0.9 |
 
-The best cell — 10-day holding, 0.25% threshold, 0.55 confidence — returns
-10.3% with Sharpe 0.33. Reported alone that would look like a finding. Its
-p-value is 0.34, it is one of eighteen attempts, and it still loses to buy and
-hold by 255 points. Searching a grid this size would be expected to throw up
-about one spuriously significant result; it produced none. The median
-configuration is negative.
+The best cell by Sharpe — 3-day holding, 0.25% threshold, 0.60 confidence —
+returns 2.1% with Sharpe 0.37 on 29 trades. Reported alone that would look like
+a finding. Its p-value is 0.28, it is one of eighteen attempts, and its return
+is a rounding error beside the buy-and-hold figure above. Note also that it is
+not the best cell by *return*: that is 10-day / 0.25% / 0.55, at 7.7% and Sharpe
+0.26. Which configuration is "best" depends on which column you rank by, and the
+two disagree — a grid with a real edge in it would not behave that way.
+Searching a grid this size would be expected to throw up about one spuriously
+significant result; it produced none. The median configuration is negative.
 
 ```bash
 python scripts/sensitivity.py SPY 10y     # writes docs/sensitivity_spy_10y.csv
 ```
 
-Full grid: [`docs/sensitivity_spy_10y.csv`](docs/sensitivity_spy_10y.csv).
+Full grid: [`docs/sensitivity_spy_10y.csv`](docs/sensitivity_spy_10y.csv) — committed,
+so the table and the figure above can both be checked against it. Regenerated
+2026-08-28 on the pinned dependency set; rerunning moves the cells slightly as the
+data window rolls forward, and has not yet moved the conclusion.
 
 
 ### Reproducing it
