@@ -92,21 +92,48 @@ the wrong direction and a clear signal the sample could not resolve anything.
 Only at 37 folds does the estimate settle near zero. Any backtest reporting a
 Sharpe off a handful of trades is reporting noise.
 
-**Removing label overlap halved the model's apparent skill.** With adjacent CV
-folds the model scored AUC 0.674. Adding `gap=label_horizon` to
-`TimeSeriesSplit` — so no training label is computed from a price inside the
-test fold — drops it to **AUC 0.511, accuracy 0.499**. A coin flip. That
-difference was leakage, not signal.
+**The label-overlap embargo is correct and buys nothing measurable.** The label
+is a forward return over `horizon` bars, so a training row within `horizon` of
+the test window is computed partly from test-period prices. `gap=label_horizon`
+on `TimeSeriesSplit` removes that overlap. Measured on the current code, holding
+everything else fixed, it moves CV AUC from **0.520 to 0.527** and accuracy from
+0.505 to 0.516 — inside the noise, and if anything upward.
 
-**Filling on the signal bar was worth the entire remaining result.** The
-backtest originally read the signal at bar *i* and filled at that same bar's
-close — observing a price and then trading at it. Adding a one-bar execution
-lag (`BacktestConfig.execution_lag_bars`, decide at today's close, fill at
-tomorrow's) moved OOS return from +1.2% to **-0.2%** and Sharpe from 0.07 to
-**0.00**. Evaluating stops against each bar's high and low rather than its
-close (`intrabar_stops`) took it further, to **-2.0%** and **-0.10** — a
-whipsaw that dips through the stop and recovers by the bell is a real loss the
-close never sees. Set it to 0 to reproduce the optimistic version.
+That is not the result an earlier version of this section reported, which cited
+a fall from 0.674 to 0.511 and called the difference leakage. That pair does not
+reproduce: the same measurement against the commit that published it, on the
+same data, returns 0.520 and 0.527. Rather than keep a number whose provenance
+cannot be established, the honest reading is the one above — the classifier sits
+at a coin flip with the embargo and without it, because there is no skill for
+label overlap to inflate. The embargo stays regardless. It is correct in
+principle, and its value does not depend on being able to measure a penalty for
+omitting it.
+
+**Two execution assumptions were wrong, and fixing them cost nothing
+measurable.** The backtest originally read the signal at bar *i* and filled at
+that same bar's close — observing a price and then trading at it. It also
+checked stops against the close, which never sees an intraday excursion through
+the stop that recovers by the bell. Both are corrected
+(`BacktestConfig.execution_lag_bars`, `intrabar_stops`), and both corrections
+are right on first principles whatever the numbers say. Holding data, model,
+folds and seed constant and varying only these two settings:
+
+| Configuration | Trades | OOS return | Sharpe | p |
+|---|---:|---:|---:|---:|
+| fill on the signal bar, stops on close | 61 | -1.13% | -0.05 | 0.89 |
+| + one-bar execution lag | 61 | +0.71% | 0.05 | 0.89 |
+| + intrabar stops (current default) | 68 | -0.20% | 0.00 | 1.00 |
+
+An earlier version of this section reported that the execution lag cost the
+strategy its remaining return. It does not: on this data the lag *improves* the
+result and the optimistic configuration is already negative. That earlier claim
+was over-read — a delta of one or two points attributed to a cause, when the
+fold-stability table below shows this estimator moving further than that on
+nothing but where the fold boundaries fall. The corrections stand on their
+logic; the effect sizes were never large enough to attribute.
+
+Set `execution_lag_bars=0` and `intrabar_stops=False` to reproduce the first
+row.
 
 The February–March 2020 fold is the worst single window: -3.9% across 15
 trades as the model traded actively into the COVID drawdown. Regime-conditional
