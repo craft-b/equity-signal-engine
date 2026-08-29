@@ -23,23 +23,23 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 
 | | In-sample | Walk-forward (OOS) | Buy & hold |
 |---|---:|---:|---:|
-| Total return | 18.2% | **-2.0%** | **265.9%** |
-| Sharpe | 1.05 | **-0.10** | 0.87 |
-| Trades | 67 | 70 | 1 |
+| Total return | 17.0% | **-0.2%** | **262.0%** |
+| Sharpe | 1.29 | **0.00** | 0.86 |
+| Trades | 50 | 68 | 1 |
 
-Stationary-bootstrap Sharpe 95% CI on OOS daily returns: **[-0.61, 0.72]**
-t-test on mean daily return: **t = -0.30, p = 0.76**
+Stationary-bootstrap Sharpe 95% CI on OOS daily returns: **[-0.503, 0.749]**
+t-test on mean daily return: **t = 0.001, p = 0.999**
 
 ### There is no statistically detectable edge
 
 The confidence interval comfortably includes zero and the strategy is beaten
-by roughly 266 percentage points by doing nothing at all. This is the finding,
+by roughly 262 percentage points by doing nothing at all. This is the finding,
 and it is reported rather than buried.
 
 Three things are worth drawing out.
 
-**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.05
-in-sample against -0.10 out-of-sample is what fitting a model on the rows you
+**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.29
+in-sample against 0.00 out-of-sample is what fitting a model on the rows you
 then score it on buys you. The dashboard still displays the in-sample panel,
 explicitly labelled as such, because that gap is the most useful thing the
 project has to teach.
@@ -86,21 +86,29 @@ much. It does:
 
 | Min train bars | Test bars | Folds | Trades | OOS Sharpe | p |
 |---:|---:|---:|---:|---:|---:|
-| 300 | 63 | 35 | 89 | **-0.00** | 0.99 |
-| 252 | 126 | 17 | 107 | -0.05 | 0.88 |
-| 250 | 60 | 37 | 67 | -0.12 | 0.73 |
-| 252 | 63 | 35 | 77 | -0.22 | 0.52 |
-| 250 | 63 | 35 | 72 | -0.30 | 0.38 |
-| 252 | 60 | 37 | 85 | **-0.41** | 0.22 |
+| 252 | 63 | 35 | 62 | **+0.05** | 0.89 |
+| 252 | 126 | 17 | 82 | +0.02 | 0.96 |
+| 250 | 60 | 37 | 66 | +0.01 | 0.98 |
+| 300 | 63 | 35 | 77 | -0.03 | 0.93 |
+| 252 | 60 | 37 | 82 | -0.10 | 0.77 |
+| 250 | 63 | 35 | 76 | **-0.29** | 0.39 |
 
-Moving the minimum training window by two bars — 250 to 252, holding test
-bars at 60 — moves the OOS Sharpe from -0.12 to -0.41. Nothing about the
-strategy changed. The six configurations span 0.4 of Sharpe purely on where
-the folds happen to land.
+Moving the minimum training window by two bars — 250 to 252, holding test bars
+at 63 — moves the OOS Sharpe from -0.29 to +0.05, and flips its sign. Nothing
+about the strategy changed. The six configurations span 0.34 of Sharpe purely
+on where the folds happen to land.
 
-Every one of them is negative, and not one is significant. That is the useful
-reading: the spread is noise around zero, and any single number drawn from it
-would be a number about the fold boundaries rather than about the strategy.
+Not one is significant; the smallest p-value in the set is 0.39. That is the
+useful reading: the spread is noise around zero, and any single number drawn
+from it would be a number about the fold boundaries rather than about the
+strategy.
+
+The instability is sharper than one table can show. An earlier run of this same
+grid returned six negative Sharpes; this one returns three positive and three
+negative, with no change to the strategy and two weeks more data. A set that
+cannot hold its sign between runs is not measuring the strategy, and reporting
+any single cell from it — including the best one — would be reporting the
+sampling noise instead.
 
 ```bash
 python scripts/fold_stability.py SPY 10y
