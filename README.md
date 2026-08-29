@@ -2,7 +2,8 @@
 
 [![CI](https://github.com/craft-b/equity-signal-engine/actions/workflows/test.yml/badge.svg)](https://github.com/craft-b/equity-signal-engine/actions/workflows/test.yml)
 
-A production-style ML trading system demonstrating end-to-end ML engineering in finance — from raw market data to a live interactive dashboard.
+Walk-forward backtesting infrastructure for short-term equity direction
+prediction, built to answer a question honestly rather than to answer it well.
 
 ## Demo
 
@@ -15,6 +16,38 @@ A production-style ML trading system demonstrating end-to-end ML engineering in 
 > Both run on free tiers that sleep. The dashboard may show a "wake this app"
 > button and take a few minutes to rebuild; the API cold-starts in around 80
 > seconds. Neither is broken — it is idle.
+
+## The problem
+
+Two questions sit behind this repository, and only one of them is interesting.
+
+The first is whether daily OHLCV technical indicators can predict short-term
+direction on a single liquid index ETF. The expected answer is no — that
+information is in the price within milliseconds, and a decade of it is one of
+the most picked-over datasets in existence. Confirming that is worth very
+little.
+
+The second is the one worth building for: **how would you know?** A backtest is
+an unusually easy thing to fool yourself with, because every convenient mistake
+pushes the result the same direction. Label windows that overlap the test fold
+leak the answer. Filling at the close of the bar you read the signal from means
+trading at a price you have only just observed. Checking stops against the
+close never sees the intraday excursion that would have taken you out. Fold
+boundaries are a free parameter nobody reports. And a strategy is rarely a
+single configuration — it is a grid, quietly searched, with one cell written up.
+
+Each of those, on its own, turns nothing into something. None of them announces
+itself; the backtest simply returns a better number, and a better number is
+exactly what you were hoping for. So the engineering problem is not building a
+model. It is building the evidence chain that would let you disbelieve one —
+embargoed folds, per-fold preprocessing, an execution lag, intrabar stops,
+confidence intervals that respect autocorrelation, and the whole search grid
+published rather than its best cell.
+
+The strategy here has no detectable edge, which is the expected answer. What
+the repository is actually for is the apparatus that establishes it, and the
+part that would be reused unchanged against a dataset where the answer might be
+different.
 
 ## Results
 
