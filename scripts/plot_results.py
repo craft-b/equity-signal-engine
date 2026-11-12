@@ -26,8 +26,9 @@ DEFAULT_CSV = ROOT / "docs" / "sensitivity_spy_10y.csv"
 INK = "#1a1d21"
 MUTED = "#6b7280"
 HAIRLINE = "#d8dbe0"
-# One neutral colour on purpose. None of these configurations is significant,
-# so colouring by sign would dress noise up as winners and losers.
+# One neutral colour on purpose. Nothing in this grid clears what chance
+# would produce, so colouring by sign would dress noise up as winners and
+# losers.
 BAR = "#8b9099"
 
 
@@ -48,10 +49,19 @@ def main(csv: str | None = None) -> int:
     ax.axvline(0, color=INK, linewidth=1.1, zorder=3)
     ax.set_xlabel("Out-of-sample Sharpe ratio", fontsize=10, color=INK)
     significant = int((frame["p_value"] < 0.05).sum())
-    ax.set_title(
-        "Every configuration lands on zero",
-        fontsize=15, color=INK, loc="left", pad=34, weight="600",
-    )
+    expected = 0.05 * len(frame)
+    # The title is read from the data. It used to say "Every configuration
+    # lands on zero", which was true of the run that wrote it and false of the
+    # next one, where a single cell cleared p<0.05 -- the one false positive a
+    # grid this size is expected to produce. A title that cannot change with
+    # the numbers under it is a caption waiting to become a lie.
+    if significant == 0:
+        title = "Every configuration lands on zero"
+    elif significant <= round(expected):
+        title = f"{significant} of {len(frame)} clears p<0.05 — about what chance gives"
+    else:
+        title = f"{significant} of {len(frame)} clear p<0.05 — more than chance gives"
+    ax.set_title(title, fontsize=15, color=INK, loc="left", pad=34, weight="600")
     ax.text(
         0, 1.055,
         f"SPY · 10 years · walk-forward with embargo · {len(frame)} combinations of "
@@ -61,7 +71,7 @@ def main(csv: str | None = None) -> int:
     ax.text(
         0, 1.012,
         f"{significant} of {len(frame)} significant at p<0.05 — "
-        f"chance alone would give about {0.05 * len(frame):.1f}",
+        f"chance alone would give about {expected:.1f}",
         transform=ax.transAxes, fontsize=9, color=MUTED,
     )
 

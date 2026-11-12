@@ -51,28 +51,36 @@ different.
 
 ## Results
 
-**SPY, 10 years (2016-08 to 2026-08), 37 walk-forward folds, 2,183 out-of-sample days.**
+**SPY, 10 years (2016-11 to 2026-11), 37 walk-forward folds, 2,183 out-of-sample days.**
 5-day holding, 0.5% signal threshold, 0.1% transaction cost per leg.
 
 | | In-sample | Walk-forward (OOS) | Buy & hold |
 |---|---:|---:|---:|
-| Total return | 17.0% | **-0.2%** | **262.0%** |
-| Sharpe | 1.29 | **0.00** | 0.86 |
-| Trades | 50 | 68 | 1 |
+| Total return | 7.4% | **0.4%** | **237.9%** |
+| Sharpe | 0.63 | **0.03** | 0.81 |
+| Trades | 29 | 127 | 1 |
 
-Stationary-bootstrap Sharpe 95% CI on OOS daily returns: **[-0.503, 0.749]**
-t-test on mean daily return: **t = 0.001, p = 0.999**
+Stationary-bootstrap Sharpe 95% CI on OOS daily returns: **[-0.547, 0.802]**
+t-test on mean daily return: **t = 0.092, p = 0.926**
+
+Re-derived 2026-11-11 after three corrections to the pipeline, each of which
+moved the numbers and none of which moved the conclusion: censored rows at the
+end of each training window were being labelled 0 instead of dropped; a short
+position was charged its notional twice; and a position still open at a fold
+boundary was booked to cash but never counted as a trade, which is why the
+out-of-sample trade count roughly doubled. The in-sample Sharpe fell from 1.29
+to 0.63 on the corrected labels alone.
 
 ### There is no statistically detectable edge
 
 The confidence interval comfortably includes zero and the strategy is beaten
-by roughly 262 percentage points by doing nothing at all. This is the finding,
+by roughly 238 percentage points by doing nothing at all. This is the finding,
 and it is reported rather than buried.
 
 Three things are worth drawing out.
 
-**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.29
-in-sample against 0.00 out-of-sample is what fitting a model on the rows you
+**The in-sample figure is meaningless, and the gap shows why.** Sharpe 0.63
+in-sample against 0.03 out-of-sample is what fitting a model on the rows you
 then score it on buys you. The dashboard still displays the in-sample panel,
 explicitly labelled as such, because that gap is the most useful thing the
 project has to teach.
@@ -89,15 +97,17 @@ interval excludes zero where the stationary one includes it. Pass
 **Small samples will lie to you.** On 2 years of data (4 folds, 17 trades) the
 OOS Sharpe came out at 0.93 — and it *rose* when leakage was removed, which is
 the wrong direction and a clear signal the sample could not resolve anything.
-Only at 37 folds does the estimate settle near zero. Any backtest reporting a
-Sharpe off a handful of trades is reporting noise.
+Only at 37 folds does the estimate settle near zero. The same 2-year window
+today reads -0.36 on 14 trades. Any backtest reporting a Sharpe off a handful
+of trades is reporting noise.
 
 **The label-overlap embargo is correct and buys nothing measurable.** The label
 is a forward return over `horizon` bars, so a training row within `horizon` of
 the test window is computed partly from test-period prices. `gap=label_horizon`
-on `TimeSeriesSplit` removes that overlap. Measured on the current code, holding
-everything else fixed, it moves CV AUC from **0.520 to 0.527** and accuracy from
-0.505 to 0.516 — inside the noise, and if anything upward.
+on `TimeSeriesSplit` removes that overlap. Measured before the label correction,
+holding everything else fixed, it moved CV AUC from **0.520 to 0.527** and accuracy
+from 0.505 to 0.516 — inside the noise, and if anything upward. On the corrected
+labels the classifier reads CV AUC 0.517 with the embargo in place.
 
 That is not the result an earlier version of this section reported, which cited
 a fall from 0.674 to 0.511 and called the difference leakage. That pair does not
@@ -122,7 +132,11 @@ folds and seed constant and varying only these two settings:
 |---|---:|---:|---:|---:|
 | fill on the signal bar, stops on close | 61 | -1.13% | -0.05 | 0.89 |
 | + one-bar execution lag | 61 | +0.71% | 0.05 | 0.89 |
-| + intrabar stops (current default) | 68 | -0.20% | 0.00 | 1.00 |
+| + intrabar stops | 68 | -0.20% | 0.00 | 1.00 |
+
+That table was measured before the label correction. The same default
+configuration on the corrected labels, with end-of-fold positions now counted,
+reads 127 trades, +0.40%, Sharpe 0.03, p = 0.93.
 
 An earlier version of this section reported that the execution lag cost the
 strategy its remaining return. It does not: on this data the lag *improves* the
@@ -135,7 +149,7 @@ logic; the effect sizes were never large enough to attribute.
 Set `execution_lag_bars=0` and `intrabar_stops=False` to reproduce the first
 row.
 
-The February–March 2020 fold is the worst single window: -3.9% across 15
+The January–March 2020 fold is the worst single window: -6.2% across 22
 trades as the model traded actively into the COVID drawdown. Regime-conditional
 performance is broken out in the dashboard.
 
@@ -146,33 +160,38 @@ much. It does:
 
 | Min train bars | Test bars | Folds | Trades | OOS Sharpe | p |
 |---:|---:|---:|---:|---:|---:|
-| 252 | 63 | 35 | 62 | **+0.05** | 0.89 |
-| 252 | 126 | 17 | 82 | +0.02 | 0.96 |
-| 250 | 60 | 37 | 66 | +0.01 | 0.98 |
-| 300 | 63 | 35 | 77 | -0.03 | 0.93 |
-| 252 | 60 | 37 | 82 | -0.10 | 0.77 |
-| 250 | 63 | 35 | 76 | **-0.29** | 0.39 |
+| 300 | 63 | 35 | 123 | **+0.09** | 0.79 |
+| 252 | 63 | 35 | 113 | +0.05 | 0.88 |
+| 250 | 63 | 35 | 86 | +0.01 | 0.97 |
+| 250 | 60 | 37 | 125 | -0.01 | 0.98 |
+| 252 | 126 | 17 | 116 | -0.04 | 0.90 |
+| 252 | 60 | 37 | 96 | **-0.18** | 0.61 |
 
 Moving the minimum training window by two bars — 250 to 252, holding test bars
-at 63 — moves the OOS Sharpe from -0.29 to +0.05, and flips its sign. Nothing
-about the strategy changed. The six configurations span 0.34 of Sharpe purely
-on where the folds happen to land.
+at 60 — moves the OOS Sharpe from -0.01 to -0.18; moving the test window by
+three bars instead, 60 to 63, takes it back to +0.05 and flips the sign.
+Nothing about the strategy changed. The six configurations span 0.27 of Sharpe
+purely on where the folds happen to land.
 
-Not one is significant; the smallest p-value in the set is 0.39. That is the
+Not one is significant; the smallest p-value in the set is 0.61. That is the
 useful reading: the spread is noise around zero, and any single number drawn
 from it would be a number about the fold boundaries rather than about the
 strategy.
 
-The instability is sharper than one table can show. An earlier run of this same
-grid returned six negative Sharpes; this one returns three positive and three
-negative, with no change to the strategy and two weeks more data. A set that
-cannot hold its sign between runs is not measuring the strategy, and reporting
-any single cell from it — including the best one — would be reporting the
-sampling noise instead.
+The instability is sharper than one table can show. Successive runs of this
+same grid have returned six negative Sharpes, then three and three, then the
+split above, with no change to the strategy between them beyond the
+corrections noted earlier and a few months more data. A set that cannot hold
+its sign between runs is not measuring the strategy, and reporting any single
+cell from it — including the best one — would be reporting the sampling noise
+instead.
 
 ```bash
-python scripts/fold_stability.py SPY 10y
+python scripts/fold_stability.py SPY 10y     # writes docs/fold_stability_spy_10y.csv
 ```
+
+Full sweep: [`docs/fold_stability_spy_10y.csv`](docs/fold_stability_spy_10y.csv), committed
+alongside the sensitivity grid.
 
 ### How many configurations were tried?
 
@@ -183,19 +202,23 @@ walk-forward with embargo and per-fold preprocessing:
 
 | | |
 |---|---|
-| OOS Sharpe across 18 configurations | min **-0.41** · median **-0.01** · max **0.37** |
-| Significant at p < 0.05 | **0 of 18** |
+| OOS Sharpe across 18 configurations | min **-0.16** · median **0.08** · max **0.83** |
+| Significant at p < 0.05 | **1 of 18** |
 | Expected false positives at p < 0.05 | ~0.9 |
 
 The best cell by Sharpe — 3-day holding, 0.25% threshold, 0.60 confidence —
-returns 2.1% with Sharpe 0.37 on 29 trades. Reported alone that would look like
-a finding. Its p-value is 0.28, it is one of eighteen attempts, and its return
-is a rounding error beside the buy-and-hold figure above. Note also that it is
-not the best cell by *return*: that is 10-day / 0.25% / 0.55, at 7.7% and Sharpe
-0.26. Which configuration is "best" depends on which column you rank by, and the
-two disagree — a grid with a real edge in it would not behave that way.
-Searching a grid this size would be expected to throw up about one spuriously
-significant result; it produced none. The median configuration is negative.
+returns 9.2% with Sharpe 0.83 on 56 trades, p = 0.016. Reported alone that
+would look like a finding, and it is the one cell in the grid that clears the
+5% bar. It is also exactly what a grid of eighteen is expected to produce by
+chance: about 0.9 false positives, and here is the one. Its neighbours do not
+support it (the same holding and threshold at 0.55 confidence reads Sharpe
+0.06), and its return is a rounding error beside the buy-and-hold figure above.
+Note also that it is not the best cell by *return*: that is 10-day / 0.25% /
+0.55, at 11.9% and Sharpe 0.43, p = 0.21. Which configuration is "best" depends
+on which column you rank by, and the two disagree — a grid with a real edge in
+it would not behave that way. An earlier run of the same grid produced no
+significant cell and a negative median; this one produces one and a median of
+0.08. Neither is a signal.
 
 ```bash
 python scripts/sensitivity.py SPY 10y     # writes docs/sensitivity_spy_10y.csv
@@ -203,8 +226,9 @@ python scripts/sensitivity.py SPY 10y     # writes docs/sensitivity_spy_10y.csv
 
 Full grid: [`docs/sensitivity_spy_10y.csv`](docs/sensitivity_spy_10y.csv) — committed,
 so the table and the figure above can both be checked against it. Regenerated
-2026-08-28 on the pinned dependency set; rerunning moves the cells slightly as the
-data window rolls forward, and has not yet moved the conclusion.
+2026-11-11 on the pinned dependency set, after the corrections above; rerunning
+moves the cells as the data window rolls forward, and has not yet moved the
+conclusion.
 
 
 ### Reproducing it
@@ -239,7 +263,8 @@ streamlit run stock_dashboard/app.py
 
 ## Overview
 
-This project builds a supervised learning pipeline for short-term equity direction prediction, backed by a realistic event-driven backtest engine. The goal is to showcase ML engineering patterns applicable to systematic trading infrastructure.
+A supervised pipeline for short-term equity direction prediction, an event-driven
+backtest engine, and the validation apparatus around them.
 
 **Capabilities:**
 - Sklearn-compatible data pipeline with configurable technical indicator computation, outlier capping, missing-data handling, and feature selection
@@ -265,6 +290,7 @@ equity-signal-engine/
 │   │   ├── 1_Signal_Generator.py   # ML model training + signal view
 │   │   └── 2_Strategy_Backtest.py  # Backtest configuration + results
 │   ├── data_pipeline.py        # Data fetching + sklearn Pipeline
+│   ├── labels.py               # Forward-return label; censored rows dropped, not labelled
 │   ├── models.py               # Model training + evaluation
 │   ├── backtest.py             # Event-driven backtest engine (vectorized)
 │   ├── walk_forward.py         # Walk-forward OOS validation engine
@@ -277,6 +303,7 @@ equity-signal-engine/
 │   └── schemas.py              # Pydantic request/response models
 ├── tests/
 │   ├── test_data_pipeline.py   # feature pipeline + transformers
+│   ├── test_labels.py          # label construction + censoring
 │   ├── test_models.py          # training, CV, calibration
 │   ├── test_backtest.py        # execution, stops, costs, lag
 │   ├── test_walk_forward.py    # folds, embargo, per-fold refit
@@ -286,6 +313,12 @@ equity-signal-engine/
 │   ├── test_monitoring.py      # drift detection
 │   ├── test_pages_importable.py# Streamlit pages parse and import
 │   └── test_api.py             # REST endpoints
+├── scripts/
+│   ├── measure_oos.py          # in-sample vs walk-forward vs buy-and-hold, CI, t-test
+│   ├── sensitivity.py          # the 18-configuration grid -> docs/sensitivity_*.csv
+│   ├── fold_stability.py       # fold-boundary sweep -> docs/fold_stability_*.csv
+│   └── plot_results.py         # the README figure, from the committed CSV
+├── docs/                       # committed measurements the README tables are read from
 ├── .github/workflows/
 │   └── test.yml                # CI: pytest on every push
 ├── requirements.txt
@@ -294,7 +327,7 @@ equity-signal-engine/
 
 ## Tests
 
-194 tests across the full pipeline, run automatically on every push:
+212 tests across the full pipeline, run on every push against Python 3.11 and 3.12:
 
 ```bash
 pytest tests/
@@ -323,6 +356,12 @@ pytest tests/
 - **Preprocessing fit inside each fold**: the scaler, outlier bounds and
   correlation-based feature selection are fitted on training rows only, then applied
   to the contiguous train+test span so rolling indicators keep their trailing history
+- **Censored rows are dropped, not labelled**: the last `horizon` rows of any window have
+  no observable outcome. `labels.add_target` removes them before the label is formed;
+  an earlier version labelled them 0, which put fabricated negatives directly against
+  every test fold
+- **Gaps are filled forward only**: a backward fill writes a later bar into an earlier row.
+  Leading rows with no indicator history stay NaN and are zero-filled at the end
 - **Price columns never scaled**: Close/Open/High/Low remain in dollar terms for backtest accuracy
 - **Time-series CV**: `TimeSeriesSplit` throughout — no random shuffling of temporal data
 - **Depth-constrained Random Forest**: `max_depth=5`, `min_samples_leaf=25` to resist overfitting on noisy financial data

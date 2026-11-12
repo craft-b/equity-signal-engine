@@ -59,3 +59,5 @@ Thumbs.db
 *.bak
 *.swp
 results_*.txt
+# The measurements the README tables are read from are committed on purpose.
+!docs/*.csv
