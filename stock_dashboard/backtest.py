@@ -198,13 +198,21 @@ def run_backtest(
             portfolio_history_arr[i] = portfolio_history_arr[i - 1]
             continue
 
-        # Mark-to-market
-        portfolio_value = cash + shares * price * position if position != 0 else cash
+        # Mark-to-market. Entry debits the notional from cash for BOTH sides —
+        # it is held as collateral — so open value is cash plus that collateral
+        # plus the unrealised P&L, signed by side. For a long this reduces to
+        # cash + shares*price. The previous form, cash + shares*price*position,
+        # was only right for longs: it assumed a short had credited cash with
+        # the sale proceeds, which entry never did, so a short's value fell by
+        # twice its notional the bar after it opened.
+        portfolio_value = (
+            cash + shares * entry_price + shares * (price - entry_price) * position
+            if position != 0 else cash
+        )
 
         # ---------- Exit logic ----------
         if position != 0:
             days_held = i - entry_idx
-            unrealized_pct = (price - entry_price) / entry_price * position
 
             stop_price = entry_price * (1 - config.stop_loss_pct * position)
             target_price = entry_price * (1 + config.take_profit_pct * position)
@@ -243,7 +251,11 @@ def run_backtest(
                 gross_pnl = shares * (exit_price - entry_price) * position
                 transaction_fee = shares * exit_price * config.transaction_cost_pct
                 net_pnl = gross_pnl - transaction_fee
-                cash += shares * entry_price * position + net_pnl
+                # Release the collateral and book the result. No `* position`:
+                # the notional was debited on entry for both sides, so it comes
+                # back for both. With the multiplier, a short's collateral was
+                # subtracted a second time here.
+                cash += shares * entry_price + net_pnl
 
                 trades.append(Trade(
                     entry_date=entry_date,
@@ -279,13 +291,32 @@ def run_backtest(
         portfolio_history_arr[i] = portfolio_value
 
     # ---------- Close any open position at end ----------
+    # Recorded as a trade, not just booked to cash. Previously the P&L went into
+    # the final portfolio value but no Trade was appended, so a position still
+    # open at the last bar appeared in the equity curve and nowhere else: with
+    # it as the only trade, total_return reported 0.0% against a curve that had
+    # moved, and num_trades reported 0. In walk-forward that is every fold whose
+    # last entry is within max_holding_days of the fold boundary.
     if position != 0:
         final_price = prices[-1]
         gross_pnl = shares * (final_price - entry_price) * position
         transaction_fee = shares * final_price * config.transaction_cost_pct
         net_pnl = gross_pnl - transaction_fee
-        cash += shares * entry_price * position + net_pnl
+        cash += shares * entry_price + net_pnl
         portfolio_history_arr[-1] = cash
+        trades.append(Trade(
+            entry_date=entry_date,
+            exit_date=dates[-1],
+            entry_price=entry_price,
+            exit_price=final_price,
+            position="LONG" if position == 1 else "SHORT",
+            shares=shares,
+            pnl=net_pnl,
+            pnl_pct=net_pnl / config.initial_capital * 100,
+            return_pct=(final_price - entry_price) / entry_price * position * 100,
+            days_held=len(bt) - 1 - entry_idx,
+            exit_reason="End of Data",
+        ))
 
     portfolio_history: List[float] = portfolio_history_arr.tolist()
     final_value = portfolio_history[-1]

@@ -65,7 +65,11 @@ def _run_legacy_backtest(
             portfolio_history.append(portfolio_history[-1])
             continue
 
-        portfolio_value = cash + shares * price * position if position != 0 else cash
+        # Same short-side correction as the engine: collateral plus signed open P&L.
+        portfolio_value = (
+            cash + shares * entry_price + shares * (price - entry_price) * position
+            if position != 0 else cash
+        )
 
         if position != 0:
             days_held = i - entry_idx
@@ -89,7 +93,7 @@ def _run_legacy_backtest(
                     gross_pnl = shares * (entry_price - price)
                 transaction_fee = shares * price * config.transaction_cost_pct
                 net_pnl = gross_pnl - transaction_fee
-                cash += (shares * entry_price * position) + net_pnl
+                cash += shares * entry_price + net_pnl
 
                 trades.append(Trade(
                     entry_date=entry_date,
@@ -130,8 +134,21 @@ def _run_legacy_backtest(
             gross_pnl = shares * (entry_price - final_price)
         transaction_fee = shares * final_price * config.transaction_cost_pct
         net_pnl = gross_pnl - transaction_fee
-        cash += (shares * entry_price * position) + net_pnl
+        cash += shares * entry_price + net_pnl
         portfolio_history[-1] = cash
+        trades.append(Trade(
+            entry_date=entry_date,
+            exit_date=bt["Date"].iloc[-1],
+            entry_price=entry_price,
+            exit_price=final_price,
+            position="LONG" if position == 1 else "SHORT",
+            shares=shares,
+            pnl=net_pnl,
+            pnl_pct=net_pnl / config.initial_capital * 100,
+            return_pct=(final_price - entry_price) / entry_price * position * 100,
+            days_held=len(bt) - 1 - entry_idx,
+            exit_reason="End of Data",
+        ))
 
     return pd.DataFrame([vars(t) for t in trades]), {}, portfolio_history
 

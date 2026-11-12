@@ -499,3 +499,109 @@ class TestIntrabarStops:
         config = BacktestConfig(stop_loss_pct=0.03, max_holding_days=30)
         trades, metrics, _ = self._run(df, config)
         assert "error" not in metrics
+
+
+# ---------------------------------------------------------------------------
+# Accounting consistency: the trade table and the equity curve must agree
+# ---------------------------------------------------------------------------
+# Both defects below were invisible to trade-level assertions. A short's
+# per-trade pnl was computed correctly while cash was debited for its notional
+# on entry AND again on exit, so the equity curve fell by twice the notional per
+# short; and a position still open at the last bar had its P&L booked to cash
+# but never recorded as a trade, so total_return could read 0.0% against a
+# curve that had moved. Checking that sum(trade pnl) == final - initial catches
+# both, and would have caught them from the start.
+
+def _falling_short_setup(n: int = 80):
+    prices = np.linspace(100.0, 80.0, n)
+    df = pd.DataFrame({
+        "Date": pd.date_range("2023-01-01", periods=n, freq="B"),
+        "Close": prices,
+        "SMA_10": np.full(n, 95.0),   # SMA_10 < SMA_50 -> short when enabled
+        "SMA_50": np.full(n, 100.0),
+    })
+    return df
+
+
+class TestShortAccounting:
+    def test_short_portfolio_curve_matches_trade_pnl(self):
+        df = _falling_short_setup()
+        cfg = BacktestConfig(
+            enable_shorts=True, max_holding_days=50,
+            stop_loss_pct=0.50, take_profit_pct=0.50,
+            transaction_cost_pct=0.0, intrabar_stops=False, execution_lag_bars=0,
+        )
+        trades_df, metrics, ph = run_backtest(df, config=cfg)
+        assert not trades_df.empty
+        assert (trades_df["position"] == "SHORT").all()
+        curve_pnl = ph[-1] - cfg.initial_capital
+        assert trades_df["pnl"].sum() == pytest.approx(curve_pnl, abs=1e-6), (
+            f"trade pnl {trades_df['pnl'].sum():.2f} vs curve {curve_pnl:.2f}")
+
+    def test_short_does_not_lose_its_notional_on_entry(self):
+        """The bar after a short opens, value must be ~capital, not capital - 2x notional."""
+        df = _falling_short_setup()
+        cfg = BacktestConfig(
+            enable_shorts=True, max_holding_days=50, max_position_pct=0.20,
+            stop_loss_pct=0.50, take_profit_pct=0.50,
+            transaction_cost_pct=0.0, intrabar_stops=False, execution_lag_bars=0,
+        )
+        _, _, ph = run_backtest(df, config=cfg)
+        # Entry happens at bar 1 on this setup; bar 2 is the first mark-to-market.
+        assert ph[2] > cfg.initial_capital * 0.99, (
+            f"portfolio fell to {ph[2]:,.0f} the bar after a 20% short opened")
+
+    def test_short_profits_show_in_total_return(self):
+        df = _falling_short_setup()
+        cfg = BacktestConfig(
+            enable_shorts=True, max_holding_days=50,
+            stop_loss_pct=0.50, take_profit_pct=0.50,
+            transaction_cost_pct=0.0, intrabar_stops=False, execution_lag_bars=0,
+        )
+        _, metrics, _ = run_backtest(df, config=cfg)
+        # Falling 20% with a 20% short position: unambiguously positive.
+        assert metrics["total_return"] > 0
+
+    def test_long_trade_pnl_matches_curve(self):
+        """Same invariant on the long side, so the fix is not short-specific."""
+        n = 80
+        df = pd.DataFrame({
+            "Date": pd.date_range("2023-01-01", periods=n, freq="B"),
+            "Close": np.linspace(100.0, 120.0, n),
+            "SMA_10": np.full(n, 105.0),
+            "SMA_50": np.full(n, 100.0),
+        })
+        cfg = BacktestConfig(
+            max_holding_days=50, stop_loss_pct=0.50, take_profit_pct=0.50,
+            transaction_cost_pct=0.0, intrabar_stops=False, execution_lag_bars=0,
+        )
+        trades_df, _, ph = run_backtest(df, config=cfg)
+        assert (trades_df["position"] == "LONG").all()
+        assert trades_df["pnl"].sum() == pytest.approx(ph[-1] - cfg.initial_capital, abs=1e-6)
+
+
+class TestEndOfDataClose:
+    def test_open_position_at_last_bar_is_recorded_as_a_trade(self):
+        df = _falling_short_setup()
+        cfg = BacktestConfig(
+            enable_shorts=True, max_holding_days=500,   # never exits on its own
+            stop_loss_pct=0.50, take_profit_pct=0.50,
+            transaction_cost_pct=0.0, intrabar_stops=False, execution_lag_bars=0,
+        )
+        trades_df, metrics, ph = run_backtest(df, config=cfg)
+        assert len(trades_df) == 1
+        assert trades_df.iloc[0]["exit_reason"] == "End of Data"
+        assert metrics["num_trades"] == 1
+
+    def test_forced_close_pnl_is_in_total_return(self):
+        """Previously total_return read 0.0% while the curve had moved."""
+        df = _falling_short_setup()
+        cfg = BacktestConfig(
+            enable_shorts=True, max_holding_days=500,
+            stop_loss_pct=0.50, take_profit_pct=0.50,
+            transaction_cost_pct=0.0, intrabar_stops=False, execution_lag_bars=0,
+        )
+        trades_df, metrics, ph = run_backtest(df, config=cfg)
+        curve_return = (ph[-1] / cfg.initial_capital - 1) * 100
+        assert metrics["total_return"] == pytest.approx(curve_return, abs=1e-6)
+        assert trades_df["pnl"].sum() == pytest.approx(ph[-1] - cfg.initial_capital, abs=1e-6)
