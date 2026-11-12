@@ -28,6 +28,7 @@ import logging  # noqa: E402
 
 from backtest import BacktestConfig  # noqa: E402
 from data_pipeline import PipelineConfig, create_pipeline, process_stock_data  # noqa: E402
+from labels import add_target  # noqa: E402
 from models import ModelConfig, train_model  # noqa: E402
 from stats import ttest_mean_return  # noqa: E402
 from walk_forward import WalkForwardConfig, walk_forward_backtest  # noqa: E402
@@ -48,13 +49,6 @@ PIPELINE_CONFIG = PipelineConfig(
     return_lags=[1, 2, 5],
     min_periods=100,
 )
-
-
-def add_target(df: pd.DataFrame, holding: int, threshold: float) -> pd.DataFrame:
-    out = df.copy()
-    out["Future_Return"] = out["Close"].pct_change(holding).shift(-holding)
-    out["Target"] = (out["Future_Return"] > threshold / 100).astype(int)
-    return out.dropna(subset=["Target"]).reset_index(drop=True)
 
 
 def sharpe(returns: np.ndarray) -> float:

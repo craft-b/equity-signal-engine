@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from backtest import BacktestConfig, run_backtest
 from data_pipeline import PipelineConfig, create_pipeline, process_stock_data
 from models import ModelConfig, TrainResult, train_model
+from labels import add_target
 from regimes import classify_vol_regimes, regime_performance
 from stats import bootstrap_sharpe_ci, ttest_mean_return
 from utils import (
@@ -120,13 +121,6 @@ PIPELINE_CONFIG = PipelineConfig(
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data(ticker: str, period: str) -> dict:
     return process_stock_data(ticker, period, PIPELINE_CONFIG)
-
-
-def add_target(df: pd.DataFrame, holding_period: int, threshold_pct: float = 0.5) -> pd.DataFrame:
-    out = df.copy()
-    out["Future_Return"] = out["Close"].pct_change(holding_period).shift(-holding_period)
-    out["Target"] = (out["Future_Return"] > threshold_pct / 100).astype(int)
-    return out.dropna(subset=["Target"]).reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------

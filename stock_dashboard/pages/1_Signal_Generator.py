@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data_pipeline import PipelineConfig, process_stock_data
 from models import ModelConfig, TrainResult, generate_signals, train_model
+from labels import add_target
 from utils import build_feature_importance_chart
 
 st.set_page_config(page_title="Signal Generator", layout="wide")
@@ -85,14 +86,6 @@ def load_data(ticker: str, period: str) -> dict:
         min_periods=100,
     )
     return process_stock_data(ticker, period, config)
-
-
-def add_target(df: pd.DataFrame, horizon: int, threshold_pct: float) -> pd.DataFrame:
-    out = df.copy()
-    future_ret = out["Close"].pct_change(horizon).shift(-horizon)
-    out["Target"] = (future_ret > threshold_pct / 100).astype(int)
-    out["Future_Return"] = future_ret
-    return out.dropna(subset=["Target"]).reset_index(drop=True)
 
 
 def signal_quality_table(signal_df: pd.DataFrame) -> pd.DataFrame:
