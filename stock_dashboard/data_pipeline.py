@@ -273,9 +273,14 @@ class MissingDataHandler(BaseEstimator, TransformerMixin):
         df = X.drop(columns=self.drop_cols, errors="ignore").copy()
         numeric = df.select_dtypes(include=[np.number]).columns
         df[numeric] = df[numeric].ffill(limit=5)
-        critical = [c for c in ("Close", "Return") if c in df.columns]
-        if critical:
-            df = df.dropna(subset=critical)
+        # Only a missing price removes a row. The first row of any slice has a
+        # NaN Return (pct_change has nothing behind it); the backward fill used
+        # to paper over that with the next bar's return. Dropping the row
+        # instead changes the row count, and the walk-forward refit path
+        # refuses a fold whose preprocessing changed its length -- so every
+        # fold was skipped. The row stays; FinalNaNHandler zero-fills Return.
+        if "Close" in df.columns:
+            df = df.dropna(subset=["Close"])
         return df
 
 

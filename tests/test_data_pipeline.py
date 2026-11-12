@@ -189,6 +189,19 @@ class TestMissingDataHandler:
         assert (result["SMA_10"].iloc[5:8] == before).all()
         assert not (result["SMA_10"].iloc[5:8] == after).any()
 
+    def test_a_leading_nan_return_keeps_its_row(self, raw_ohlcv):
+        """Every per-fold slice starts with a NaN Return. Dropping that row
+        changes the slice length and the walk-forward refit path then skips
+        the fold, so the row count must survive the handler."""
+        config = PipelineConfig(sma_periods=[10])
+        df = TechnicalIndicators(config).fit_transform(raw_ohlcv)
+        df.loc[0, "Return"] = np.nan
+
+        result = MissingDataHandler().fit_transform(df)
+
+        assert len(result) == len(df)
+        assert np.isnan(result["Return"].iloc[0])
+
     def test_leading_gaps_are_not_filled_from_later_bars(self, raw_ohlcv):
         """A row before an indicator has history must not borrow a later value."""
         config = PipelineConfig(sma_periods=[10])
