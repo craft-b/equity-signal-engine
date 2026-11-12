@@ -245,7 +245,15 @@ class OutlierHandler(BaseEstimator, TransformerMixin):
 
 
 class MissingDataHandler(BaseEstimator, TransformerMixin):
-    """Forward/backward fill, then drop columns that still exceed missing threshold."""
+    """Forward-fill short gaps, then drop columns that still exceed the missing threshold.
+
+    Forward only. This used to backward-fill as well, which writes a later
+    bar's value into an earlier row -- a look-ahead, small but of exactly the
+    kind the rest of the pipeline is built to exclude. The rows it affected are
+    the leading ones whose indicator has no history yet; those now stay NaN
+    here and FinalNaNHandler fills them with 0, which carries no information
+    from the future.
+    """
 
     _PROTECTED = {"Date", "Ticker", "Close", "Open", "High", "Low", "Volume", "Return"}
 
@@ -264,7 +272,7 @@ class MissingDataHandler(BaseEstimator, TransformerMixin):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         df = X.drop(columns=self.drop_cols, errors="ignore").copy()
         numeric = df.select_dtypes(include=[np.number]).columns
-        df[numeric] = df[numeric].ffill(limit=5).bfill(limit=5)
+        df[numeric] = df[numeric].ffill(limit=5)
         critical = [c for c in ("Close", "Return") if c in df.columns]
         if critical:
             df = df.dropna(subset=critical)

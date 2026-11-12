@@ -177,6 +177,28 @@ class TestMissingDataHandler:
 
         assert result["SMA_10"].isna().sum() == 0
 
+    def test_gaps_are_filled_from_the_past_not_the_future(self, raw_ohlcv):
+        config = PipelineConfig(sma_periods=[10])
+        df = TechnicalIndicators(config).fit_transform(raw_ohlcv)
+        before = df["SMA_10"].iloc[4]
+        after = df["SMA_10"].iloc[8]
+        df.loc[5:7, "SMA_10"] = np.nan
+
+        result = MissingDataHandler().fit_transform(df)
+
+        assert (result["SMA_10"].iloc[5:8] == before).all()
+        assert not (result["SMA_10"].iloc[5:8] == after).any()
+
+    def test_leading_gaps_are_not_filled_from_later_bars(self, raw_ohlcv):
+        """A row before an indicator has history must not borrow a later value."""
+        config = PipelineConfig(sma_periods=[10])
+        df = TechnicalIndicators(config).fit_transform(raw_ohlcv)
+        df.loc[0:2, "SMA_10"] = np.nan
+
+        result = MissingDataHandler().fit_transform(df)
+
+        assert result["SMA_10"].iloc[0:3].isna().all()
+
 
 # ---------------------------------------------------------------------------
 # FeatureSelector
