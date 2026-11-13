@@ -11,6 +11,12 @@ The gap between the first two is the whole point of the exercise.
 Usage:
     python scripts/measure_oos.py            # SPY, 2y
     python scripts/measure_oos.py QQQ 5y
+
+Two flags reproduce the execution ablation in the README, holding data, model,
+folds and seed fixed and relaxing one correction at a time:
+
+    --no-lag        fill at the close of the bar the signal was read from
+    --close-stops   check stops against the close, not the bar's range
 """
 
 from __future__ import annotations
@@ -51,7 +57,18 @@ def sharpe(returns: np.ndarray) -> float:
     return float(returns.mean() / returns.std() * np.sqrt(TRADING_DAYS))
 
 
-def main(ticker: str = "SPY", period: str = "2y") -> int:
+def main(*argv: str) -> int:
+    flags = {a for a in argv if a.startswith("--")}
+    unknown = flags - {"--no-lag", "--close-stops"}
+    if unknown:
+        print(f"unknown flag(s): {', '.join(sorted(unknown))}")
+        return 2
+    positional = [a for a in argv if not a.startswith("--")]
+    ticker = positional[0] if positional else "SPY"
+    period = positional[1] if len(positional) > 1 else "2y"
+    execution_lag_bars = 0 if "--no-lag" in flags else 1
+    intrabar_stops = "--close-stops" not in flags
+
     loaded = process_stock_data(ticker, period, PIPELINE_CONFIG)
     if not loaded["success"]:
         print(f"data fetch failed: {loaded['error']}")
@@ -61,9 +78,13 @@ def main(ticker: str = "SPY", period: str = "2y") -> int:
     print(f"{ticker} · {len(processed)} bars · "
           f"{processed['Date'].min().date()} to {processed['Date'].max().date()}")
     print(f"holding {HOLDING}d · threshold {THRESHOLD}% · "
-          f"costs {BacktestConfig().transaction_cost_pct:.1%} per leg\n")
+          f"costs {BacktestConfig().transaction_cost_pct:.1%} per leg")
+    print(f"execution lag {execution_lag_bars} bar(s) · "
+          f"stops checked {'intrabar' if intrabar_stops else 'on close'}\n")
 
-    bt_config = BacktestConfig(max_holding_days=HOLDING)
+    bt_config = BacktestConfig(max_holding_days=HOLDING,
+                               execution_lag_bars=execution_lag_bars,
+                               intrabar_stops=intrabar_stops)
     model_config = ModelConfig(model_type="Random Forest", calibrate=True,
                                label_horizon=HOLDING)
 

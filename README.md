@@ -130,24 +130,26 @@ folds and seed constant and varying only these two settings:
 
 | Configuration | Trades | OOS return | Sharpe | p |
 |---|---:|---:|---:|---:|
-| fill on the signal bar, stops on close | 61 | -1.13% | -0.05 | 0.89 |
-| + one-bar execution lag | 61 | +0.71% | 0.05 | 0.89 |
-| + intrabar stops | 68 | -0.20% | 0.00 | 1.00 |
+| fill on the signal bar, stops on close | 115 | +0.15% | 0.02 | 0.95 |
+| + one-bar execution lag | 121 | -1.75% | -0.07 | 0.84 |
+| + intrabar stops (current default) | 127 | +0.40% | 0.03 | 0.93 |
 
-That table was measured before the label correction. The same default
-configuration on the corrected labels, with end-of-fold positions now counted,
-reads 127 trades, +0.40%, Sharpe 0.03, p = 0.93.
+Two earlier versions of this table told two different stories: first that the
+lag cost the strategy its remaining return, then that it improved it. On the
+corrected labels the lag lowers the figure and intrabar stops raise it back,
+and the whole excursion is two points of Sharpe — less than the fold-stability
+table below shows this estimator moving on nothing but where the fold
+boundaries fall. That is the reading to keep: the corrections stand on their
+logic, and the effect sizes were never large enough to attribute to anything.
 
-An earlier version of this section reported that the execution lag cost the
-strategy its remaining return. It does not: on this data the lag *improves* the
-result and the optimistic configuration is already negative. That earlier claim
-was over-read — a delta of one or two points attributed to a cause, when the
-fold-stability table below shows this estimator moving further than that on
-nothing but where the fold boundaries fall. The corrections stand on their
-logic; the effect sizes were never large enough to attribute.
+```bash
+python scripts/measure_oos.py SPY 10y --no-lag --close-stops   # first row
+python scripts/measure_oos.py SPY 10y --close-stops            # second row
+python scripts/measure_oos.py SPY 10y                          # current default
+```
 
-Set `execution_lag_bars=0` and `intrabar_stops=False` to reproduce the first
-row.
+The two relaxed rows were run one trading day after the default, so their
+buy-and-hold reads 236.7% against 237.9% above; the window rolled a bar.
 
 The January–March 2020 fold is the worst single window: -6.2% across 22
 trades as the model traded actively into the COVID drawdown. Regime-conditional
