@@ -51,7 +51,7 @@ if ticker in ASSET_META:
     st.sidebar.caption(ASSET_META[ticker]["desc"])
 
 period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y", "5 Years": "5y"}
-period = period_map[st.sidebar.selectbox("Period", list(period_map.keys()), index=1)]
+period = period_map[st.sidebar.selectbox("Period", list(period_map.keys()), index=2)]
 
 st.sidebar.subheader("Signal Parameters")
 horizon_days = st.sidebar.slider(
@@ -295,6 +295,15 @@ c7.metric("CV F1", f"{result_model.cv.f1:.3f}")
 c8.metric("Train time", f"{result_model.train_time_s:.1f}s")
 
 # Signal stats
+st.warning(
+    "**Everything below the model metrics is in-sample.** The signals, the "
+    "latest output and the signal-quality table come from a model fitted on "
+    "every row shown, so a strong win rate here measures memorisation, not "
+    "foresight. The cross-validated metrics above and the Strategy Backtest "
+    "page's walk-forward section are the out-of-sample view.",
+    icon=None,
+)
+
 st.header("Signal Statistics")
 up_n = (signal_df["signal"] == 1).sum()
 down_n = (signal_df["signal"] == -1).sum()
@@ -317,17 +326,16 @@ elif total_sig > 0:
     else:
         st.success(f"Balanced signals: {up_pct:.0f}% Up / {100 - up_pct:.0f}% Down")
 
-# Current signal
-st.header("Current Signal")
+# Latest output. Neutral styling on purpose: a green "UP" in large type reads
+# as a recommendation, and the README's finding is that there is no edge to
+# recommend from.
+st.header("Latest Model Output")
+st.caption("The most recent row's in-sample classification. Not a forecast and not a recommendation.")
 latest = signal_df.iloc[-1]
 cs1, cs2, cs3 = st.columns(3)
 with cs1:
-    if latest["signal"] == 1:
-        st.success("### UP")
-    elif latest["signal"] == -1:
-        st.error("### DOWN")
-    else:
-        st.info("### NO SIGNAL")
+    label = {1: "Up", -1: "Down"}.get(int(latest["signal"]), "No signal")
+    st.info(f"### {label}")
 cs2.metric("P(Up)", f"{latest['prob_up']:.1%}")
 cs2.metric("Signal Strength", f"{latest['signal_strength']:.3f}")
 cs3.metric("Price", f"${latest['Close']:.2f}")
@@ -337,8 +345,11 @@ cs3.metric("Date", latest["Date"].strftime("%Y-%m-%d"))
 st.plotly_chart(build_signal_chart(signal_df, min_signal_prob, enable_shorts),
                 use_container_width=True)
 
-st.header("Signal Quality Validation")
-st.caption("Do signals predict future returns? This is the most important validation.")
+st.header("Signal Quality (in-sample)")
+st.caption(
+    "Forward returns grouped by the signal the fitted model assigns to the same rows. "
+    "The out-of-sample version of this question is the walk-forward on the Strategy Backtest page."
+)
 st.plotly_chart(build_return_distribution(signal_df, horizon_days), use_container_width=True)
 quality_df = signal_quality_table(signal_df)
 if not quality_df.empty:

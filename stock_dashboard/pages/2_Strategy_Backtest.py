@@ -59,7 +59,11 @@ period_map = {
     "6 Months": "6mo", "1 Year": "1y", "2 Years": "2y",
     "5 Years": "5y", "10 Years": "10y",
 }
-period_label = st.sidebar.selectbox("Period", list(period_map.keys()), index=1)
+# Two years is the shortest window the walk-forward can run on at the default
+# fold sizes. One year used to be the default, so the first click showed the
+# in-sample Sharpe in large type and, at the foot of the page, an error where
+# the honest number should have been.
+period_label = st.sidebar.selectbox("Period", list(period_map.keys()), index=2)
 period = period_map[period_label]
 if period_label in ("5 Years", "10 Years"):
     st.sidebar.caption(
@@ -198,6 +202,137 @@ if "error" in metrics:
     st.stop()
 
 # ---------------------------------------------------------------------------
+# Walk-Forward Validation
+# ---------------------------------------------------------------------------
+
+if run_wf:
+    st.header("Walk-Forward Validation")
+    st.caption(
+        "The honest estimate, so it comes first. Each fold trains on all prior "
+        "data and tests on the next window it has never seen, with an embargo "
+        "and preprocessing refit per fold. On 2 years this is a handful of folds "
+        "and the interval is wide; the README's 10-year run is the one that can "
+        "say anything."
+    )
+
+    wf_config = WalkForwardConfig(
+        min_train_bars=wf_min_train,
+        test_bars=wf_test_bars,
+        expanding=wf_expanding,
+        # The embargo must track the label horizon, not sit at its default.
+        # With a 10-day holding period a 5-bar embargo still leaks five days
+        # of test-window prices into the last training labels.
+        embargo_bars=holding_period,
+    )
+    wf_bt_config = BacktestConfig(
+        max_position_pct=max_position_pct,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+        max_holding_days=holding_period,
+        transaction_cost_pct=transaction_cost_pct,
+        min_confidence=min_confidence,
+        enable_shorts=enable_shorts,
+    )
+    # label_horizon feeds TimeSeriesSplit(gap=...) — same reason as the
+    # embargo above: it has to follow the holding period.
+    wf_model_cfg = (
+        ModelConfig(model_type=model_type, calibrate=True,
+                    label_horizon=holding_period)
+        if model_type != "Technical Only" else None
+    )
+
+    def make_train_fn(hp: int, tp: float, mcfg):
+        def _train(df_fold: pd.DataFrame):
+            if mcfg is None:
+                return None, None
+            df_fold_t = add_target(df_fold, hp, tp)
+            result = train_model(df_fold_t, mcfg)
+            if result is None:
+                return None, None
+            return result.model, result.feature_cols
+        return _train
+
+    # Log the resolved configuration. Without this there is no way to tell,
+    # after the fact, what the UI actually ran — which made a UI/script
+    # discrepancy impossible to diagnose.
+    logger.info(
+        "walk-forward config: ticker=%s period=%s holding=%s threshold=%s "
+        "min_conf=%s shorts=%s cost=%s stop=%s take=%s pos=%s | "
+        "min_train=%s test_bars=%s expanding=%s embargo=%s model=%s",
+        ticker, period, holding_period, threshold_pct, min_confidence,
+        enable_shorts, transaction_cost_pct, stop_loss_pct, take_profit_pct,
+        max_position_pct, wf_min_train, wf_test_bars, wf_expanding,
+        holding_period, model_type,
+    )
+
+    with st.spinner(f"Running walk-forward ({wf_test_bars}-bar folds)…"):
+        wf_folds, wf_summary = walk_forward_backtest(
+            df_features, make_train_fn(holding_period, threshold_pct, wf_model_cfg),
+            wf_bt_config, wf_config,
+            # Refit scaler, outlier bounds and feature selection inside each
+            # fold so no test-period statistic shapes the training features.
+            raw_df=result.get("raw"),
+            pipeline_factory=lambda: create_pipeline(PIPELINE_CONFIG),
+        )
+
+    logger.info(
+        "walk-forward result: folds=%s trades=%s oos_sharpe=%s oos_return=%s",
+        wf_summary.get("n_folds"), wf_summary.get("total_trades"),
+        wf_summary.get("oos_sharpe"), wf_summary.get("oos_total_return"),
+    )
+
+    if "error" in wf_summary:
+        st.error(f"Walk-forward error: {wf_summary['error']}")
+    else:
+        # Summary metrics
+        w1, w2, w3, w4 = st.columns(4)
+        w1.metric("OOS Sharpe", f"{wf_summary['oos_sharpe']:.2f}",
+                  help="Sharpe computed on concatenated OOS daily returns.")
+        w2.metric("OOS Sortino", f"{wf_summary['oos_sortino']:.2f}")
+        w3.metric("OOS Total Return", f"{wf_summary['oos_total_return']:.2f}%",
+                  help="Compounded return across all OOS folds.")
+        w4.metric("Profitable Folds", f"{wf_summary['pct_profitable_folds']:.0f}%",
+                  help="% of folds with positive return.")
+
+        w5, w6, w7, w8 = st.columns(4)
+        w5.metric("Folds", wf_summary["n_folds"])
+        w6.metric("Total OOS Trades", wf_summary["total_trades"])
+        w7.metric(
+            "Mean Fold Return",
+            f"{wf_summary['mean_fold_return']:.2f}%",
+            f"± {wf_summary['std_fold_return']:.2f}%",
+        )
+        w8.metric(
+            "Mean Fold Sharpe",
+            f"{wf_summary['mean_sharpe']:.2f}",
+            f"± {wf_summary['std_sharpe']:.2f}",
+        )
+
+        # In-sample vs OOS comparison
+        is_sharpe = metrics.get("sharpe_ratio", 0)
+        oos_sharpe = wf_summary["oos_sharpe"]
+        if is_sharpe > 0 and oos_sharpe < is_sharpe * 0.5:
+            st.warning(
+                f"OOS Sharpe ({oos_sharpe:.2f}) is less than half of in-sample "
+                f"({is_sharpe:.2f}) — possible overfitting."
+            )
+        elif oos_sharpe >= is_sharpe * 0.8:
+            st.success(
+                f"OOS Sharpe ({oos_sharpe:.2f}) is close to in-sample "
+                f"({is_sharpe:.2f}) — strategy generalises well."
+            )
+
+        # OOS equity curve
+        st.plotly_chart(
+            build_walk_forward_chart(wf_folds, bt_config.initial_capital),
+            use_container_width=True,
+        )
+
+        # Per-fold breakdown
+        with st.expander("Per-Fold Breakdown"):
+            st.dataframe(summarise_walk_forward_folds(wf_folds), use_container_width=True, hide_index=True)
+
+# ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
 
@@ -206,8 +341,7 @@ st.warning(
     "**These numbers are in-sample.** The model was fitted on every row below "
     "and then scored on those same rows, so they measure how well it memorised "
     "this history — not how it would have performed. They are shown because "
-    "the gap between them and the walk-forward results is the point. For the "
-    "honest estimate, see **Walk-Forward Validation** below.",
+    "the gap between them and the walk-forward results above is the point.",
     icon=None,
 )
 
@@ -363,134 +497,6 @@ if not trades_df.empty:
             )
 else:
     st.info("Run a backtest with at least one trade to see regime performance.")
-
-# ---------------------------------------------------------------------------
-# Walk-Forward Validation
-# ---------------------------------------------------------------------------
-
-if run_wf:
-    st.header("Walk-Forward Validation")
-    st.caption(
-        "Each fold trains on all prior data and tests on the next OOS window — "
-        "mimicking live deployment. OOS Sharpe is the most trustworthy performance estimate."
-    )
-
-    wf_config = WalkForwardConfig(
-        min_train_bars=wf_min_train,
-        test_bars=wf_test_bars,
-        expanding=wf_expanding,
-        # The embargo must track the label horizon, not sit at its default.
-        # With a 10-day holding period a 5-bar embargo still leaks five days
-        # of test-window prices into the last training labels.
-        embargo_bars=holding_period,
-    )
-    wf_bt_config = BacktestConfig(
-        max_position_pct=max_position_pct,
-        stop_loss_pct=stop_loss_pct,
-        take_profit_pct=take_profit_pct,
-        max_holding_days=holding_period,
-        transaction_cost_pct=transaction_cost_pct,
-        min_confidence=min_confidence,
-        enable_shorts=enable_shorts,
-    )
-    # label_horizon feeds TimeSeriesSplit(gap=...) — same reason as the
-    # embargo above: it has to follow the holding period.
-    wf_model_cfg = (
-        ModelConfig(model_type=model_type, calibrate=True,
-                    label_horizon=holding_period)
-        if model_type != "Technical Only" else None
-    )
-
-    def make_train_fn(hp: int, tp: float, mcfg):
-        def _train(df_fold: pd.DataFrame):
-            if mcfg is None:
-                return None, None
-            df_fold_t = add_target(df_fold, hp, tp)
-            result = train_model(df_fold_t, mcfg)
-            if result is None:
-                return None, None
-            return result.model, result.feature_cols
-        return _train
-
-    # Log the resolved configuration. Without this there is no way to tell,
-    # after the fact, what the UI actually ran — which made a UI/script
-    # discrepancy impossible to diagnose.
-    logger.info(
-        "walk-forward config: ticker=%s period=%s holding=%s threshold=%s "
-        "min_conf=%s shorts=%s cost=%s stop=%s take=%s pos=%s | "
-        "min_train=%s test_bars=%s expanding=%s embargo=%s model=%s",
-        ticker, period, holding_period, threshold_pct, min_confidence,
-        enable_shorts, transaction_cost_pct, stop_loss_pct, take_profit_pct,
-        max_position_pct, wf_min_train, wf_test_bars, wf_expanding,
-        holding_period, model_type,
-    )
-
-    with st.spinner(f"Running walk-forward ({wf_test_bars}-bar folds)…"):
-        wf_folds, wf_summary = walk_forward_backtest(
-            df_features, make_train_fn(holding_period, threshold_pct, wf_model_cfg),
-            wf_bt_config, wf_config,
-            # Refit scaler, outlier bounds and feature selection inside each
-            # fold so no test-period statistic shapes the training features.
-            raw_df=result.get("raw"),
-            pipeline_factory=lambda: create_pipeline(PIPELINE_CONFIG),
-        )
-
-    logger.info(
-        "walk-forward result: folds=%s trades=%s oos_sharpe=%s oos_return=%s",
-        wf_summary.get("n_folds"), wf_summary.get("total_trades"),
-        wf_summary.get("oos_sharpe"), wf_summary.get("oos_total_return"),
-    )
-
-    if "error" in wf_summary:
-        st.error(f"Walk-forward error: {wf_summary['error']}")
-    else:
-        # Summary metrics
-        w1, w2, w3, w4 = st.columns(4)
-        w1.metric("OOS Sharpe", f"{wf_summary['oos_sharpe']:.2f}",
-                  help="Sharpe computed on concatenated OOS daily returns.")
-        w2.metric("OOS Sortino", f"{wf_summary['oos_sortino']:.2f}")
-        w3.metric("OOS Total Return", f"{wf_summary['oos_total_return']:.2f}%",
-                  help="Compounded return across all OOS folds.")
-        w4.metric("Profitable Folds", f"{wf_summary['pct_profitable_folds']:.0f}%",
-                  help="% of folds with positive return.")
-
-        w5, w6, w7, w8 = st.columns(4)
-        w5.metric("Folds", wf_summary["n_folds"])
-        w6.metric("Total OOS Trades", wf_summary["total_trades"])
-        w7.metric(
-            "Mean Fold Return",
-            f"{wf_summary['mean_fold_return']:.2f}%",
-            f"± {wf_summary['std_fold_return']:.2f}%",
-        )
-        w8.metric(
-            "Mean Fold Sharpe",
-            f"{wf_summary['mean_sharpe']:.2f}",
-            f"± {wf_summary['std_sharpe']:.2f}",
-        )
-
-        # In-sample vs OOS comparison
-        is_sharpe = metrics.get("sharpe_ratio", 0)
-        oos_sharpe = wf_summary["oos_sharpe"]
-        if is_sharpe > 0 and oos_sharpe < is_sharpe * 0.5:
-            st.warning(
-                f"OOS Sharpe ({oos_sharpe:.2f}) is less than half of in-sample "
-                f"({is_sharpe:.2f}) — possible overfitting."
-            )
-        elif oos_sharpe >= is_sharpe * 0.8:
-            st.success(
-                f"OOS Sharpe ({oos_sharpe:.2f}) is close to in-sample "
-                f"({is_sharpe:.2f}) — strategy generalises well."
-            )
-
-        # OOS equity curve
-        st.plotly_chart(
-            build_walk_forward_chart(wf_folds, bt_config.initial_capital),
-            use_container_width=True,
-        )
-
-        # Per-fold breakdown
-        with st.expander("Per-Fold Breakdown"):
-            st.dataframe(summarise_walk_forward_folds(wf_folds), use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.caption("For educational and research purposes only. Not financial advice.")

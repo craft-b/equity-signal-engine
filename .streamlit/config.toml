@@ -1,0 +1,16 @@
+# Streamlit theme and chrome. No secrets live here; secrets.toml is ignored.
+
+[theme]
+base = "light"
+primaryColor = "#2f5d8a"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f5f8"
+textColor = "#1a1d21"
+font = "sans serif"
+
+[client]
+# Hides the "Deploy" button and the running-man menu for visitors.
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
