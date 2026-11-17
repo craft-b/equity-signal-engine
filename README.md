@@ -57,20 +57,32 @@ different.
 
 | | In-sample | Walk-forward (OOS) | Buy & hold |
 |---|---:|---:|---:|
-| Total return | 7.4% | **0.4%** | **237.9%** |
-| Sharpe | 0.63 | **0.03** | 0.81 |
-| Trades | 29 | 127 | 1 |
+| Total return | 42.8% | **-6.3%** | **231.2%** |
+| Sharpe | 1.56 | **-0.31** | 0.80 |
+| Trades | 164 | 111 | 1 |
 
-Stationary-bootstrap Sharpe 95% CI on OOS daily returns: **[-0.547, 0.802]**
-t-test on mean daily return: **t = 0.092, p = 0.926**
+Stationary-bootstrap Sharpe 95% CI on OOS daily returns: **[-0.780, 0.255]**
+t-test on mean daily return: **t = -0.911, p = 0.362**
 
-Re-derived 2026-11-11 after three corrections to the pipeline, each of which
-moved the numbers and none of which moved the conclusion: censored rows at the
-end of each training window were being labelled 0 instead of dropped; a short
-position was charged its notional twice; and a position still open at a fold
-boundary was booked to cash but never counted as a trade, which is why the
-out-of-sample trade count roughly doubled. The in-sample Sharpe fell from 1.29
-to 0.63 on the corrected labels alone.
+Every number in this README is derived from one pinned download,
+[`docs/snapshot_spy_10y.csv`](docs/snapshot_spy_10y.csv) (2016-11-17 to
+2026-11-16), and the scripts read it by default. Two runs of the command
+below produce byte-identical output. See
+[Why the data is pinned](#why-the-data-is-pinned) for what happened before
+that was true.
+
+Re-derived 2026-11-17 on the pinned data, after three corrections to the
+pipeline on 2026-11-11, each of which moved the numbers and none of which moved
+the conclusion: censored rows at the end of each training window were being
+labelled 0 instead of dropped; a short position was charged its notional twice;
+and a position still open at a fold boundary was booked to cash but never
+counted as a trade.
+
+The previous version of this table read 7.4% and Sharpe 0.63 in-sample on 29
+trades, and 0.4% and Sharpe 0.03 out-of-sample. Those figures were measured on
+a live download and do not reproduce: ten variations of window and download on
+the pinned dependency set never gave fewer than 89 in-sample trades or an
+in-sample Sharpe below 1.41. They are withdrawn rather than explained.
 
 ### There is no statistically detectable edge
 
@@ -80,8 +92,8 @@ and it is reported rather than buried.
 
 Three things are worth drawing out.
 
-**The in-sample figure is meaningless, and the gap shows why.** Sharpe 0.63
-in-sample against 0.03 out-of-sample is what fitting a model on the rows you
+**The in-sample figure is meaningless, and the gap shows why.** Sharpe 1.56
+in-sample against -0.31 out-of-sample is what fitting a model on the rows you
 then score it on buys you. The dashboard still displays the in-sample panel,
 explicitly labelled as such, because that gap is the most useful thing the
 project has to teach.
@@ -98,8 +110,8 @@ interval excludes zero where the stationary one includes it. Pass
 **Small samples will lie to you.** On 2 years of data (4 folds, 17 trades) the
 OOS Sharpe came out at 0.93 — and it *rose* when leakage was removed, which is
 the wrong direction and a clear signal the sample could not resolve anything.
-Only at 37 folds does the estimate settle near zero. The same 2-year window
-today reads -0.36 on 14 trades. Any backtest reporting a Sharpe off a handful
+At 37 folds the estimate is -0.31 with an interval that straddles zero. The
+same 2-year window, measured again later, read -0.36 on 14 trades. Any backtest reporting a Sharpe off a handful
 of trades is reporting noise.
 
 **The label-overlap embargo is correct and buys nothing measurable.** The label
@@ -108,7 +120,8 @@ the test window is computed partly from test-period prices. `gap=label_horizon`
 on `TimeSeriesSplit` removes that overlap. Measured before the label correction,
 holding everything else fixed, it moved CV AUC from **0.520 to 0.527** and accuracy
 from 0.505 to 0.516 — inside the noise, and if anything upward. On the corrected
-labels the classifier reads CV AUC 0.517 with the embargo in place.
+labels and the pinned data the classifier reads CV AUC 0.522 with the embargo
+in place.
 
 That is not the result an earlier version of this section reported, which cited
 a fall from 0.674 to 0.511 and called the difference leakage. That pair does not
@@ -131,17 +144,19 @@ folds and seed constant and varying only these two settings:
 
 | Configuration | Trades | OOS return | Sharpe | p |
 |---|---:|---:|---:|---:|
-| fill on the signal bar, stops on close | 115 | +0.15% | 0.02 | 0.95 |
-| + one-bar execution lag | 121 | -1.75% | -0.07 | 0.84 |
-| + intrabar stops (current default) | 127 | +0.40% | 0.03 | 0.93 |
+| fill on the signal bar, stops on close | 101 | -3.91% | -0.18 | 0.60 |
+| + one-bar execution lag | 101 | -5.52% | -0.26 | 0.44 |
+| + intrabar stops (current default) | 111 | -6.33% | -0.31 | 0.36 |
 
-Two earlier versions of this table told two different stories: first that the
-lag cost the strategy its remaining return, then that it improved it. On the
-corrected labels the lag lowers the figure and intrabar stops raise it back,
-and the whole excursion is two points of Sharpe — less than the fold-stability
-table below shows this estimator moving on nothing but where the fold
-boundaries fall. That is the reading to keep: the corrections stand on their
-logic, and the effect sizes were never large enough to attribute to anything.
+Three earlier versions of this table told three different stories: that the
+lag cost the strategy its remaining return, that it improved it, and that the
+lag lowered the figure while intrabar stops raised it back. On the pinned data
+each correction lowers it a little, which is the direction you would expect
+from removing an optimistic assumption. The whole excursion is 0.13 of Sharpe —
+well under the 0.59 the fold-stability table below shows this estimator moving
+on nothing but where the fold boundaries fall. That is the reading to keep: the
+corrections stand on their logic, and the effect sizes were never large enough
+to attribute to anything.
 
 ```bash
 python scripts/measure_oos.py SPY 10y --no-lag --close-stops   # first row
@@ -149,10 +164,10 @@ python scripts/measure_oos.py SPY 10y --close-stops            # second row
 python scripts/measure_oos.py SPY 10y                          # current default
 ```
 
-The two relaxed rows were run one trading day after the default, so their
-buy-and-hold reads 236.7% against 237.9% above; the window rolled a bar.
+All three rows read the same pinned snapshot, so the data, the folds and the
+buy-and-hold figure are identical across them.
 
-The January–March 2020 fold is the worst single window: -6.2% across 22
+The January–April 2020 fold is the worst single window: -3.7% across 19
 trades as the model traded actively into the COVID drawdown. Regime-conditional
 performance is broken out in the dashboard.
 
@@ -163,31 +178,36 @@ much. It does:
 
 | Min train bars | Test bars | Folds | Trades | OOS Sharpe | p |
 |---:|---:|---:|---:|---:|---:|
-| 300 | 63 | 35 | 123 | **+0.09** | 0.79 |
-| 252 | 63 | 35 | 113 | +0.05 | 0.88 |
-| 250 | 63 | 35 | 86 | +0.01 | 0.97 |
-| 250 | 60 | 37 | 125 | -0.01 | 0.98 |
-| 252 | 126 | 17 | 116 | -0.04 | 0.90 |
-| 252 | 60 | 37 | 96 | **-0.18** | 0.61 |
+| 252 | 63 | 35 | 102 | **+0.28** | 0.41 |
+| 250 | 63 | 35 | 120 | +0.07 | 0.85 |
+| 252 | 126 | 17 | 126 | +0.03 | 0.93 |
+| 300 | 63 | 35 | 114 | -0.22 | 0.51 |
+| 252 | 60 | 37 | 114 | -0.23 | 0.50 |
+| 250 | 60 | 37 | 111 | **-0.31** | 0.36 |
 
-Moving the minimum training window by two bars — 250 to 252, holding test bars
-at 60 — moves the OOS Sharpe from -0.01 to -0.18; moving the test window by
-three bars instead, 60 to 63, takes it back to +0.05 and flips the sign.
-Nothing about the strategy changed. The six configurations span 0.27 of Sharpe
-purely on where the folds happen to land.
+Moving the test window by three bars — 60 to 63, holding the minimum training
+window at 252 — moves the OOS Sharpe from -0.23 to +0.28 and flips the sign.
+Moving the training window by two bars, 250 to 252 at 60 test bars, moves it
+from -0.31 to -0.23. Nothing about the strategy changed. The six
+configurations span 0.59 of Sharpe purely on where the folds happen to land.
 
-Not one is significant; the smallest p-value in the set is 0.61. That is the
+The headline table above uses the 250 / 60 layout, which is the lowest row
+here. It was fixed before this table was measured and is kept for that reason;
+choosing the layout after seeing the table would be the search this section
+is warning about.
+
+Not one is significant; the smallest p-value in the set is 0.36. That is the
 useful reading: the spread is noise around zero, and any single number drawn
 from it would be a number about the fold boundaries rather than about the
 strategy.
 
 The instability is sharper than one table can show. Successive runs of this
-same grid have returned six negative Sharpes, then three and three, then the
-split above, with no change to the strategy between them beyond the
-corrections noted earlier and a few months more data. A set that cannot hold
-its sign between runs is not measuring the strategy, and reporting any single
-cell from it — including the best one — would be reporting the sampling noise
-instead.
+same grid on live downloads returned six negative Sharpes, then three and
+three, and the pinned run above is three and three again with different rows
+on each side, with no change to the strategy between them beyond the
+corrections noted earlier and a few more days or months of data. A set that cannot hold its sign between runs is not measuring
+the strategy, and reporting any single cell from it — including the best one —
+would be reporting the sampling noise instead.
 
 ```bash
 python scripts/fold_stability.py SPY 10y     # writes docs/fold_stability_spy_10y.csv
@@ -205,23 +225,24 @@ walk-forward with embargo and per-fold preprocessing:
 
 | | |
 |---|---|
-| OOS Sharpe across 18 configurations | min **-0.16** · median **0.08** · max **0.83** |
-| Significant at p < 0.05 | **1 of 18** |
+| OOS Sharpe across 18 configurations | min **-0.48** · median **-0.05** · max **0.47** |
+| Significant at p < 0.05 | **0 of 18** |
 | Expected false positives at p < 0.05 | ~0.9 |
 
 The best cell by Sharpe — 3-day holding, 0.25% threshold, 0.60 confidence —
-returns 9.2% with Sharpe 0.83 on 56 trades, p = 0.016. Reported alone that
-would look like a finding, and it is the one cell in the grid that clears the
-5% bar. It is also exactly what a grid of eighteen is expected to produce by
-chance: about 0.9 false positives, and here is the one. Its neighbours do not
-support it (the same holding and threshold at 0.55 confidence reads Sharpe
-0.06), and its return is a rounding error beside the buy-and-hold figure above.
-Note also that it is not the best cell by *return*: that is 10-day / 0.25% /
-0.55, at 11.9% and Sharpe 0.43, p = 0.21. Which configuration is "best" depends
-on which column you rank by, and the two disagree — a grid with a real edge in
-it would not behave that way. An earlier run of the same grid produced no
-significant cell and a negative median; this one produces one and a median of
-0.08. Neither is a signal.
+returns 3.9% with Sharpe 0.47 on 54 trades, p = 0.17. It is not the best cell
+by *return*: that is 10-day / 0.25% / 0.60, at 9.8% and Sharpe 0.41, p = 0.24.
+Which configuration is "best" depends on which column you rank by, and the two
+disagree — a grid with a real edge in it would not behave that way.
+
+That best cell has a history worth keeping. The previous run of this grid, on
+a live download on 2026-11-11, had the same cell at Sharpe 0.83 and
+p = 0.016: the one configuration of eighteen to clear the 5% bar, and about
+what a grid this size produces by chance. It was reported as a false positive
+then. On the pinned data it reads p = 0.17. A result that was real would not
+have halved when the window moved by a few trading days and the prices by
+fractions of a cent. The run before that one produced no significant cell and
+a negative median, as this one does. None of the three is a signal.
 
 ```bash
 python scripts/sensitivity.py SPY 10y     # writes docs/sensitivity_spy_10y.csv
@@ -229,9 +250,8 @@ python scripts/sensitivity.py SPY 10y     # writes docs/sensitivity_spy_10y.csv
 
 Full grid: [`docs/sensitivity_spy_10y.csv`](docs/sensitivity_spy_10y.csv) — committed,
 so the table and the figure above can both be checked against it. Regenerated
-2026-11-11 on the pinned dependency set, after the corrections above; rerunning
-moves the cells as the data window rolls forward, and has not yet moved the
-conclusion.
+2026-11-17 on the pinned dependency set and the pinned data; rerunning the
+command reproduces the file.
 
 
 ### Reproducing it
@@ -241,8 +261,42 @@ python scripts/measure_oos.py SPY 10y
 ```
 
 Prints the table above plus per-fold detail, the bootstrap CI and the
-significance test. Numbers move slightly between runs as the data window rolls
-forward; the conclusion does not.
+significance test. It reads `docs/snapshot_spy_10y.csv`, so the output matches
+this README exactly on the pinned dependency set. Add `--live` to download from
+Yahoo instead; the numbers will then differ, and the conclusion has not.
+
+### Why the data is pinned
+
+Until 2026-11-17 every script downloaded from Yahoo on each run, and the
+README said the numbers "move slightly between runs". They moved a great deal,
+for two reasons that have nothing to do with the strategy.
+
+**Yahoo does not return the same prices twice.** Three downloads of the same
+ten years of SPY, minutes apart, differed in about 11,000 cells by up to
+$0.0002; adjusted prices are recomputed per request. The classifier sits at a
+coin flip, so that is enough to move bars across the confidence cut. Training
+on each download in turn:
+
+| Download | In-sample trades | In-sample return | In-sample Sharpe |
+|---|---:|---:|---:|
+| 1 | 160 | 41.3% | 1.57 |
+| 2 | 166 | 43.9% | 1.59 |
+| 3 | 171 | 38.5% | 1.41 |
+
+**The forest summed its trees in thread order.** With `n_jobs=-1`,
+`predict_proba` averages the trees in whatever order the threads finish, and
+the last bit of each probability changed between processes on identical data.
+The model now runs on one job.
+
+With both fixed, two runs of `measure_oos.py` are byte-identical. What pinning
+does not fix is the sensitivity itself: dropping the last one to eight trading
+days from the snapshot moves the in-sample trade count between 89 and 178. The
+snapshot makes the numbers checkable, not stable, and the fold-stability table
+above is the honest statement of how unstable they are.
+
+```bash
+python scripts/snapshot_data.py SPY 10y     # re-pin; every table must then be re-derived
+```
 
 ### What would have to change to find an edge
 
@@ -320,8 +374,9 @@ equity-signal-engine/
 │   ├── measure_oos.py          # in-sample vs walk-forward vs buy-and-hold, CI, t-test
 │   ├── sensitivity.py          # the 18-configuration grid -> docs/sensitivity_*.csv
 │   ├── fold_stability.py       # fold-boundary sweep -> docs/fold_stability_*.csv
-│   └── plot_results.py         # the README figure, from the committed CSV
-├── docs/                       # committed measurements the README tables are read from
+│   ├── plot_results.py         # the README figure, from the committed CSV
+│   └── snapshot_data.py        # pin one Yahoo download -> docs/snapshot_*.csv
+├── docs/                       # the pinned data and the measurements the README tables are read from
 ├── .github/workflows/
 │   └── test.yml                # CI: pytest on every push
 ├── requirements.txt
@@ -330,7 +385,7 @@ equity-signal-engine/
 
 ## Tests
 
-212 tests across the full pipeline, run on every push against Python 3.11 and 3.12:
+218 tests across the full pipeline, run on every push against Python 3.11 and 3.12:
 
 ```bash
 pytest tests/

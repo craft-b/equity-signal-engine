@@ -16,6 +16,7 @@ import logging
 import warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -50,23 +51,86 @@ class PipelineConfig:
 # Data fetching
 # ---------------------------------------------------------------------------
 
+def _download(ticker: str, period: str) -> pd.DataFrame:
+    """One Yahoo download, as Yahoo returns it: no derived columns."""
+    symbol = "^GSPC" if ticker.upper() == "SPX" else ticker
+    return yf.Ticker(symbol).history(period=period, auto_adjust=True).reset_index()
+
+
+def _derive(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """Add the columns every caller expects on top of a raw OHLCV frame."""
+    data = data.copy()
+    data["Ticker"] = ticker.upper().replace("^", "")
+    data["Return"] = data["Close"].pct_change()
+    data["Log_Return"] = np.log(data["Close"] / data["Close"].shift(1))
+    return data.dropna(subset=["Close"])
+
+
 @lru_cache(maxsize=64)
 def _fetch_cached(ticker: str, period: str) -> Optional[pd.DataFrame]:
     """Module-level cached fetch so the cache survives across DataFetcher instances."""
     try:
-        symbol = "^GSPC" if ticker.upper() == "SPX" else ticker
-        data = yf.Ticker(symbol).history(period=period, auto_adjust=True)
+        data = _download(ticker, period)
         if data.empty:
             logger.warning("No data returned for %s", ticker)
             return None
-        data = data.reset_index()
-        data["Ticker"] = ticker.upper().replace("^", "")
-        data["Return"] = data["Close"].pct_change()
-        data["Log_Return"] = np.log(data["Close"] / data["Close"].shift(1))
-        return data.dropna(subset=["Close"])
+        return _derive(data, ticker)
     except Exception as exc:
         logger.error("Error fetching %s: %s", ticker, exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Pinned snapshots
+# ---------------------------------------------------------------------------
+#
+# Yahoo does not return the same numbers twice. Two downloads of the same ten
+# years of SPY, minutes apart, differ in thousands of cells by fractions of a
+# cent, because the adjusted prices are recomputed per request. That is
+# harmless for a chart and fatal for a reproducibility claim: the classifier
+# here sits at a coin flip, so sub-cent noise moves which side of the
+# confidence cut a bar lands on, and the trade list with it. Measured on three
+# consecutive downloads, the in-sample trade count read 160, 166 and 171.
+#
+# So the published tables are derived from a snapshot committed under docs/,
+# and the scripts read it by default. `--live` asks Yahoo instead.
+
+SNAPSHOT_DIR = Path(__file__).resolve().parents[1] / "docs"
+
+
+def snapshot_path(ticker: str, period: str) -> Path:
+    return SNAPSHOT_DIR / f"snapshot_{ticker.lower()}_{period}.csv"
+
+
+def find_snapshot(ticker: str, period: str, live: bool = False) -> Optional[Path]:
+    """The committed snapshot for this ticker and period, if there is one."""
+    path = snapshot_path(ticker, period)
+    return path if (not live and path.exists()) else None
+
+
+def write_snapshot(ticker: str, period: str, path: Optional[Path] = None) -> Path:
+    """Download once and pin the result. Overwrites an existing snapshot."""
+    path = Path(path) if path else snapshot_path(ticker, period)
+    data = _download(ticker, period)
+    if data.empty:
+        raise ValueError(f"No data returned for {ticker}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Default float formatting is the shortest repr that round-trips, so the
+    # file holds the downloaded doubles exactly.
+    data.to_csv(path, index=False)
+    return path
+
+
+def load_snapshot(path: Union[str, Path], ticker: str) -> pd.DataFrame:
+    """Read a pinned snapshot back into the frame a live fetch would return."""
+    # float_precision="round_trip": the default C parser is fast but can be
+    # off in the last bit, which would reintroduce the noise this file exists
+    # to remove.
+    data = pd.read_csv(path, float_precision="round_trip")
+    data["Date"] = (
+        pd.to_datetime(data["Date"], utc=True).dt.tz_convert("America/New_York")
+    )
+    return _derive(data, ticker)
 
 
 class DataFetcher:
@@ -414,9 +478,13 @@ def process_stock_data(
     tickers: Union[str, List[str]],
     period: str = "2y",
     config: Optional[PipelineConfig] = None,
+    snapshot: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """
     Fetch and process stock data for one or more tickers.
+
+    Pass `snapshot` (a path from `find_snapshot`) to read a pinned file
+    instead of downloading; single ticker only.
 
     Returns a dict with keys:
         success (bool), data (DataFrame | None), error (str | None), summary (dict | None)
@@ -425,7 +493,12 @@ def process_stock_data(
         tickers = [tickers]
 
     fetcher = DataFetcher()
-    if len(tickers) == 1:
+    if snapshot is not None:
+        if len(tickers) != 1:
+            return {"success": False, "data": None,
+                    "error": "A snapshot holds one ticker", "summary": None}
+        raw = load_snapshot(snapshot, tickers[0])
+    elif len(tickers) == 1:
         raw = fetcher.fetch_stock_data(tickers[0], period)
     else:
         raw = fetcher.fetch_multiple(tickers, period)
@@ -467,6 +540,10 @@ def process_stock_data(
             "pipeline": pipe,
             "raw": raw,
             "config": config,
+            # Where the rows came from, so a caller can say so next to the
+            # numbers: a pinned file reproduces, a download does not.
+            "source": (f"pinned snapshot {Path(snapshot).name}" if snapshot
+                       else "live Yahoo download"),
         }
 
     except Exception as exc:

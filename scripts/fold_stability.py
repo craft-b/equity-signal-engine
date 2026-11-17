@@ -7,6 +7,7 @@ than the strategy. Reproduces the stability table in the README.
 Usage:
     python scripts/fold_stability.py            # SPY 10y
     python scripts/fold_stability.py QQQ 5y
+    python scripts/fold_stability.py --live     # download instead of the pinned snapshot
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ for _name in ("walk_forward", "data_pipeline", "models"):
     logging.getLogger(_name).setLevel(logging.ERROR)
 
 from backtest import BacktestConfig  # noqa: E402
-from data_pipeline import PipelineConfig, create_pipeline, process_stock_data  # noqa: E402
+from data_pipeline import (  # noqa: E402
+    PipelineConfig, create_pipeline, find_snapshot, process_stock_data,
+)
 from labels import add_target  # noqa: E402
 from models import ModelConfig, train_model  # noqa: E402
 from stats import ttest_mean_return  # noqa: E402
@@ -48,12 +51,26 @@ PIPELINE_CONFIG = PipelineConfig(
 )
 
 
-def main(ticker: str = "SPY", period: str = "10y") -> int:
-    loaded = process_stock_data(ticker, period, PIPELINE_CONFIG)
+def main(*argv: str) -> int:
+    flags = {a for a in argv if a.startswith("--")}
+    if flags - {"--live"}:
+        print(f"unknown flag(s): {', '.join(sorted(flags - {'--live'}))}")
+        return 2
+    positional = [a for a in argv if not a.startswith("--")]
+    ticker = positional[0] if positional else "SPY"
+    period = positional[1] if len(positional) > 1 else "10y"
+
+    # The pinned snapshot by default, so the committed CSV reproduces; --live
+    # downloads from Yahoo, whose adjusted prices differ a little every time.
+    loaded = process_stock_data(
+        ticker, period, PIPELINE_CONFIG,
+        snapshot=find_snapshot(ticker, period, live="--live" in flags),
+    )
     if not loaded["success"]:
         print(f"data fetch failed: {loaded['error']}")
         return 1
     processed, raw = loaded["data"], loaded["raw"]
+    print(f"data: {loaded['source']}")
 
     model_config = ModelConfig(model_type="Random Forest", calibrate=True,
                                label_horizon=HOLDING)

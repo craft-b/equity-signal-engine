@@ -33,14 +33,14 @@ stops, confidence intervals that respect autocorrelation, and the whole search
 grid published rather than its best cell.
 
 **SPY, 10 years, 37 walk-forward folds, 2,183 out-of-sample days** (5-day holding,
-0.5% threshold, 0.1% cost per leg; from the committed measurements in the README):
+0.5% threshold, 0.1% cost per leg; from the pinned snapshot in `docs/`, as in the README):
 
 | | In-sample | Walk-forward (OOS) | Buy & hold |
 |---|---:|---:|---:|
-| Total return | 7.4% | **0.4%** | **237.9%** |
-| Sharpe | 0.63 | **0.03** | 0.81 |
+| Total return | 42.8% | **-6.3%** | **231.2%** |
+| Sharpe | 1.56 | **-0.31** | 0.80 |
 
-Stationary-bootstrap Sharpe 95% CI on OOS daily returns **[-0.55, 0.80]** · t-test p = **0.93**.
+Stationary-bootstrap Sharpe 95% CI on OOS daily returns **[-0.780, 0.255]** · t-test p = **0.36**.
 """)
 
 _fig = Path(__file__).resolve().parents[1] / "docs" / "results_sensitivity.png"
@@ -48,8 +48,8 @@ if _fig.exists():
     st.image(
         str(_fig),
         caption="Out-of-sample Sharpe across 18 configurations of holding period, "
-                "threshold and confidence cut. One cell clears p<0.05, which is "
-                "what a grid of eighteen is expected to produce by chance.",
+                "threshold and confidence cut. None clears p<0.05; a grid of "
+                "eighteen would produce about one by chance.",
         use_container_width=True,
     )
 

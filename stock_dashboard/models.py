@@ -130,7 +130,12 @@ def _build_base_estimator(config: ModelConfig):
         max_features="sqrt",
         class_weight="balanced",
         random_state=config.random_state,
-        n_jobs=-1,
+        # One job, deliberately. With several, predict_proba sums the trees in
+        # whatever order the threads finish, and the last bit of the average
+        # changes from run to run. A probability that lands on the confidence
+        # cut then falls either side of it. The forest is 100 shallow trees on
+        # a few thousand rows; there is no time to save here.
+        n_jobs=1,
     )
 
 

@@ -23,7 +23,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backtest import BacktestConfig, run_backtest
-from data_pipeline import PipelineConfig, create_pipeline, process_stock_data
+from data_pipeline import PipelineConfig, create_pipeline, find_snapshot, process_stock_data
 from models import ModelConfig, TrainResult, train_model
 from labels import add_target
 from regimes import classify_vol_regimes, regime_performance
@@ -102,10 +102,10 @@ run_wf = st.sidebar.checkbox(
 )
 if run_wf:
     with st.sidebar.expander("Walk-Forward Settings"):
-        wf_min_train = st.slider("Min Train Bars", 100, 500, 252,
+        wf_min_train = st.slider("Min Train Bars", 100, 500, 250,
                                   help="Minimum training history before first OOS fold.")
-        wf_test_bars = st.slider("Test Bars per Fold", 21, 126, 63,
-                                  help="OOS bars per fold. 63 ≈ 1 quarter.")
+        wf_test_bars = st.slider("Test Bars per Fold", 21, 126, 60,
+                                  help="OOS bars per fold. 60 ≈ 1 quarter.")
         wf_expanding = st.radio("Window Type", ["Expanding", "Rolling"],
                                  help="Expanding: train on all history. Rolling: fixed lookback.") == "Expanding"
 
@@ -124,7 +124,10 @@ PIPELINE_CONFIG = PipelineConfig(
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data(ticker: str, period: str) -> dict:
-    return process_stock_data(ticker, period, PIPELINE_CONFIG)
+    # The pinned snapshot when there is one (SPY, 10 years), so this page
+    # shows the README's numbers rather than a fresh download's.
+    return process_stock_data(ticker, period, PIPELINE_CONFIG,
+                              snapshot=find_snapshot(ticker, period))
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +151,7 @@ summary = result["summary"]
 st.success(
     f"Loaded {len(df):,} rows · "
     f"{summary['date_range'][0].date()} → {summary['date_range'][1].date()}"
+    f" · {result['source']}"
 )
 
 # 2. Add target --------------------------------------------------------------
@@ -159,7 +163,8 @@ train_result: TrainResult | None = None
 
 if model_type != "Technical Only":
     with st.spinner(f"Training {model_type}…"):
-        cfg = ModelConfig(model_type=model_type, calibrate=True)
+        cfg = ModelConfig(model_type=model_type, calibrate=True,
+                          label_horizon=holding_period)
         train_result = train_model(df, cfg)
 
     if train_result:

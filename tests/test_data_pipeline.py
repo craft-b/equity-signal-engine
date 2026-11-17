@@ -376,3 +376,100 @@ class TestFittedState:
         pipe.fit(raw_ohlcv)
         out = pipe.transform(raw_ohlcv)
         assert len(out) > 0
+
+
+# ---------------------------------------------------------------------------
+# Pinned snapshots
+# ---------------------------------------------------------------------------
+
+class TestSnapshot:
+    """A snapshot has to return the downloaded doubles exactly.
+
+    The published tables are derived from one. A last-bit difference on the
+    way through the CSV would bring back the run-to-run drift the snapshot
+    exists to remove, so the round trip is checked bit for bit.
+    """
+
+    @staticmethod
+    def _yahoo_frame(n: int = 300) -> pd.DataFrame:
+        """The shape yfinance returns after reset_index(): tz-aware dates, no derived columns."""
+        rng = np.random.default_rng(1)
+        close = 100.0 * (1 + rng.normal(0, 0.01, size=n)).cumprod()
+        return pd.DataFrame({
+            "Date": pd.date_range("2022-01-03", periods=n, freq="B",
+                                  tz="America/New_York"),
+            "Open": close * (1 + rng.normal(0, 0.005, size=n)),
+            "High": close * (1 + rng.uniform(0, 0.01, size=n)),
+            "Low": close * (1 - rng.uniform(0, 0.01, size=n)),
+            "Close": close,
+            "Volume": rng.integers(1_000_000, 5_000_000, size=n),
+        })
+
+    def test_round_trip_is_bit_exact(self, tmp_path, monkeypatch):
+        import data_pipeline as dp
+
+        frame = self._yahoo_frame()
+        monkeypatch.setattr(dp, "_download", lambda ticker, period: frame.copy())
+        path = dp.write_snapshot("TEST", "10y", tmp_path / "snapshot_test_10y.csv")
+        loaded = dp.load_snapshot(path, "TEST")
+
+        for col in ("Open", "High", "Low", "Close"):
+            assert loaded[col].to_numpy().tobytes() == frame[col].to_numpy().tobytes()
+        assert (loaded["Date"] == frame["Date"]).all()
+        assert str(loaded["Date"].dt.tz) == "America/New_York"
+
+    def test_loaded_frame_matches_a_live_fetch(self, tmp_path, monkeypatch):
+        """Same columns and values as _fetch_cached builds from the same download."""
+        import data_pipeline as dp
+
+        frame = self._yahoo_frame()
+        monkeypatch.setattr(dp, "_download", lambda ticker, period: frame.copy())
+        dp._fetch_cached.cache_clear()
+        live = dp._fetch_cached("TEST", "10y")
+        dp._fetch_cached.cache_clear()
+        path = dp.write_snapshot("TEST", "10y", tmp_path / "snapshot_test_10y.csv")
+        loaded = dp.load_snapshot(path, "TEST")
+
+        assert list(loaded.columns) == list(live.columns)
+        pd.testing.assert_frame_equal(
+            loaded.reset_index(drop=True), live.reset_index(drop=True),
+            check_exact=True, check_dtype=False,
+        )
+
+    def test_process_stock_data_reads_the_snapshot_not_yahoo(self, tmp_path, monkeypatch):
+        import data_pipeline as dp
+
+        frame = self._yahoo_frame()
+        monkeypatch.setattr(dp, "_download", lambda ticker, period: frame.copy())
+        path = dp.write_snapshot("TEST", "10y", tmp_path / "snapshot_test_10y.csv")
+
+        def no_network(*args, **kwargs):
+            raise AssertionError("a snapshot run must not download")
+
+        monkeypatch.setattr(dp, "_download", no_network)
+        dp._fetch_cached.cache_clear()
+        result = dp.process_stock_data("TEST", "10y", PipelineConfig(min_periods=50),
+                                       snapshot=path)
+        assert result["success"], result["error"]
+        assert result["source"] == "pinned snapshot snapshot_test_10y.csv"
+
+    def test_find_snapshot_honours_live(self, tmp_path, monkeypatch):
+        import data_pipeline as dp
+
+        monkeypatch.setattr(dp, "SNAPSHOT_DIR", tmp_path)
+        assert dp.find_snapshot("SPY", "10y") is None
+        (tmp_path / "snapshot_spy_10y.csv").write_text("Date,Close\n")
+        assert dp.find_snapshot("SPY", "10y") == tmp_path / "snapshot_spy_10y.csv"
+        assert dp.find_snapshot("SPY", "10y", live=True) is None
+        assert dp.find_snapshot("SPY", "2y") is None
+
+    def test_committed_spy_snapshot_loads(self):
+        """The file the README tables are derived from is present and readable."""
+        import data_pipeline as dp
+
+        path = dp.find_snapshot("SPY", "10y")
+        assert path is not None, "docs/snapshot_spy_10y.csv is missing"
+        data = dp.load_snapshot(path, "SPY")
+        assert len(data) > 2400
+        assert data["Date"].is_monotonic_increasing
+        assert (data["Close"] > 0).all()

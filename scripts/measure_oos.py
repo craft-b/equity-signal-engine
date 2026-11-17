@@ -17,6 +17,13 @@ folds and seed fixed and relaxing one correction at a time:
 
     --no-lag        fill at the close of the bar the signal was read from
     --close-stops   check stops against the close, not the bar's range
+
+Data comes from the pinned snapshot under docs/ when one exists for the ticker
+and period (SPY 10y does), so the README numbers reproduce exactly. Yahoo
+returns slightly different adjusted prices on every download, which is enough
+to move the trade list.
+
+    --live          download from Yahoo instead of reading the snapshot
 """
 
 from __future__ import annotations
@@ -33,7 +40,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "stock_dashboard"))
 
 from backtest import BacktestConfig, run_backtest  # noqa: E402
-from data_pipeline import PipelineConfig, create_pipeline, process_stock_data  # noqa: E402
+from data_pipeline import (  # noqa: E402
+    PipelineConfig, create_pipeline, find_snapshot, process_stock_data,
+)
 from labels import add_target  # noqa: E402
 from models import ModelConfig, train_model  # noqa: E402
 from stats import bootstrap_sharpe_ci, ttest_mean_return  # noqa: E402
@@ -59,7 +68,7 @@ def sharpe(returns: np.ndarray) -> float:
 
 def main(*argv: str) -> int:
     flags = {a for a in argv if a.startswith("--")}
-    unknown = flags - {"--no-lag", "--close-stops"}
+    unknown = flags - {"--no-lag", "--close-stops", "--live"}
     if unknown:
         print(f"unknown flag(s): {', '.join(sorted(unknown))}")
         return 2
@@ -69,7 +78,10 @@ def main(*argv: str) -> int:
     execution_lag_bars = 0 if "--no-lag" in flags else 1
     intrabar_stops = "--close-stops" not in flags
 
-    loaded = process_stock_data(ticker, period, PIPELINE_CONFIG)
+    loaded = process_stock_data(
+        ticker, period, PIPELINE_CONFIG,
+        snapshot=find_snapshot(ticker, period, live="--live" in flags),
+    )
     if not loaded["success"]:
         print(f"data fetch failed: {loaded['error']}")
         return 1
@@ -77,6 +89,7 @@ def main(*argv: str) -> int:
     processed, raw = loaded["data"], loaded["raw"]
     print(f"{ticker} · {len(processed)} bars · "
           f"{processed['Date'].min().date()} to {processed['Date'].max().date()}")
+    print(f"data: {loaded['source']}")
     print(f"holding {HOLDING}d · threshold {THRESHOLD}% · "
           f"costs {BacktestConfig().transaction_cost_pct:.1%} per leg")
     print(f"execution lag {execution_lag_bars} bar(s) · "
